@@ -1,8 +1,11 @@
 // Mock unit tests for the VirusTotal Premium pack — no network, no app.
-//   Run: node test-plugin.mjs
+//   Run: node test-plugin.mjs [bundle]
 // Response shapes below are MEASURED (2026-10-10) against a VT Premium key, trimmed to what each
 // plugin reads. The net is mocked; a `respond(url)` returns { status, body }.
-import pack from './dist/pack.mjs';
+import { pathToFileURL } from 'node:url';
+import { resolve } from 'node:path';
+// Optional argv[2]: a bundle to test instead of dist/pack.mjs (e.g. one built to a scratch path).
+const pack = (await import(process.argv[2] ? pathToFileURL(resolve(process.argv[2])).href : './dist/pack.mjs')).default;
 
 const ok = [];
 const fail = [];
@@ -150,7 +153,7 @@ for (const p of pack.plugins) {
     });
     const graph = makeGraph({ a: { id: 'a', type: 'infrastructure.ip_address', data: { ip_address: '1.2.3.4' } } });
     const r = await P['run.vineyard.plugins.vt_relationships'].run({ ...RUN, config: KEY, input: { selection: ['a'] }, params: { limit: 5 }, net, graph });
-    check('relationships: historical cert becomes a certificate node', graph.createdNodes.some((n) => n.type === 'infrastructure.certificate' && n.data.fingerprint_sha256 === 'THUMB1' && n.data.subject_cn === 'vpn.example'));
+    check('relationships: historical cert becomes a certificate node', graph.createdNodes.some((n) => n.type === 'infrastructure.certificate' && n.data.fingerprint_sha256 === 'THUMB1' && n.data.subject_common_name === 'vpn.example'));
     check('relationships: linked "presented certificate"', graph.createdEdges.some((e) => e.label === 'presented certificate'));
     check('relationships: counts', r.counts.certs === 1);
 }
