@@ -148,12 +148,22 @@ for (const p of pack.plugins) {
 // ---- vt_relationships: historical certs → certificate nodes + edges -------------------------
 {
     const net = makeNet((u) => {
-        if (u.pathname.includes('/historical_ssl_certificates')) return { status: 200, body: { data: [{ id: 'THUMB1', attributes: { thumbprint_sha256: 'THUMB1', subject: { CN: 'vpn.example' }, validity: { not_before: '2026-01-01' } } }] } };
+        // Measured (2026-10-10): 49.247.138.199's historical cert, trimmed. Plus one without a usable thumbprint.
+        if (u.pathname.includes('/historical_ssl_certificates')) return { status: 200, body: { data: [
+            { type: 'ssl_cert', id: '611595f46ea098519e971340ad6652f46c5e08c38e4d4fc69a28a092b15e3cfa', attributes: {
+                thumbprint_sha256: '611595f46ea098519e971340ad6652f46c5e08c38e4d4fc69a28a092b15e3cfa', serial_number: 'bacaab0aa85cf5a0368f8d901a6c5ebd1e41a43',
+                subject: { O: 'GoldTrade FX', CN: 'vpn-gw.internal.goldtrade-fx.com' }, issuer: { O: 'GoldTrade FX', CN: 'vpn-gw.internal.goldtrade-fx.com' },
+                validity: { not_after: '2029-01-05 02:47:39', not_before: '2026-10-03 02:47:39' },
+                extensions: { subject_alternative_name: ['vpn-gw.internal.goldtrade-fx.com', 'gw2.goldtrade-fx.com'] } } },
+            { type: 'ssl_cert', id: 'THUMB1', attributes: { thumbprint_sha256: 'THUMB1', subject: { CN: 'junk.example' } } },
+        ] } };
         return { status: 200, body: { data: [] } };
     });
     const graph = makeGraph({ a: { id: 'a', type: 'infrastructure.ip_address', data: { ip_address: '1.2.3.4' } } });
     const r = await P['run.vineyard.plugins.vt_relationships'].run({ ...RUN, config: KEY, input: { selection: ['a'] }, params: { limit: 5 }, net, graph });
-    check('relationships: historical cert becomes a certificate node', graph.createdNodes.some((n) => n.type === 'infrastructure.certificate' && n.data.fingerprint_sha256 === 'THUMB1' && n.data.subject_common_name === 'vpn.example'));
+    const cert = graph.createdNodes.find((n) => n.type === 'infrastructure.certificate');
+    check('relationships: historical cert becomes a certificate node with the Community pack\'s fields', !!cert && cert.data.fingerprint_sha256 === '611595f46ea098519e971340ad6652f46c5e08c38e4d4fc69a28a092b15e3cfa' && cert.data.subject_common_name === 'vpn-gw.internal.goldtrade-fx.com' && cert.data.issuer === 'GoldTrade FX — vpn-gw.internal.goldtrade-fx.com' && cert.data.serial_number === 'bacaab0aa85cf5a0368f8d901a6c5ebd1e41a43' && cert.data.not_before === '2026-10-03T02:47:39Z' && cert.data.not_after === '2029-01-05T02:47:39Z' && cert.data.san_count === 2);
+    check('relationships: a cert without a 64-hex thumbprint is skipped', graph.createdNodes.filter((n) => n.type === 'infrastructure.certificate').length === 1);
     check('relationships: linked "presented certificate"', graph.createdEdges.some((e) => e.label === 'presented certificate'));
     check('relationships: counts', r.counts.certs === 1);
 }

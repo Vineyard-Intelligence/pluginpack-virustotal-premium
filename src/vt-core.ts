@@ -152,6 +152,66 @@ export function clampParam(v: unknown, def: number, min: number, max: number): n
     return Math.min(max, Math.max(min, Number.isFinite(n) && n > 0 ? Math.floor(n) : def));
 }
 
+// ASN has two spellings across the type packs: infrastructure 2.7 declares ip_address.asn and
+// netblock.asn STRINGS ('AS13335'), and autonomous_system.autonomous_system_number an INTEGER.
+// Every pack converts at its own boundary — Shodan parses 'AS…' with a regex for the AS node, Cymru
+// and the Community VT pack format VT's number as `AS${n}` for the IP — because the host converts
+// nothing: validateNodeData refuses a number where a string is declared and a string where an
+// integer is. These two are that boundary for this pack. Whatever comes in (14956, '14956',
+// 'AS14956', 'as 14956'), one canonical form goes out. AS0 is "not routed": as a value it would
+// make every unrouted IP share an ASN (shared-attribute clustering groups by it), so it is null.
+export function asnNumber(v: unknown): number | null {
+    let n: number;
+    if (typeof v === 'number') n = v;
+    else {
+        const m = /^\s*(?:AS)?\s*(\d{1,10})\s*$/i.exec(String(v ?? ''));
+        if (!m) return null;
+        n = Number(m[1]);
+    }
+    return Number.isInteger(n) && n > 0 && n <= 4294967295 ? n : null;
+}
+/** For ip_address.asn / netblock.asn: 'AS<n>'. */
+export function asnLabel(v: unknown): string | null {
+    const n = asnNumber(v);
+    return n == null ? null : `AS${n}`;
+}
+
+// A VirusTotal certificate object → certificate node data, IDENTICAL to the VirusTotal Community
+// pack's vtCert mapping. Both packs fill the same certificate node (its identity is the SHA-256
+// thumbprint) and mergeNodeData overwrites with any non-blank value, so two spellings of one field
+// would flip on every run. Community: issuer 'O — CN', serial as VT gives it (a hex string),
+// validity as ISO-8601 UTC (VT sends 'YYYY-MM-DD HH:MM:SS'), san_count over the public names.
+const INTERNAL_SUFFIX = /\.(local|localdomain|localhost|internal|lan|home\.arpa)$/;
+export function certTime(v: unknown): string | undefined {
+    return typeof v === 'string' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(v) ? `${v.replace(' ', 'T')}Z` : undefined;
+}
+export function sanDomains(raw: unknown): string[] {
+    const out = new Set<string>();
+    for (const v of Array.isArray(raw) ? raw : []) {
+        if (typeof v !== 'string') continue;
+        const name = v.trim().toLowerCase().replace(/\.$/, '').replace(/^\*\./, '');
+        if (DOMAIN_RE.test(name) && !INTERNAL_SUFFIX.test(name)) out.add(name);
+    }
+    return [...out];
+}
+/** `cert` is the attributes object (last_https_certificate, or an ssl_cert object's attributes). */
+export function certSpecFromVt(cert: any, fallbackThumb?: unknown): Record<string, unknown> | null {
+    const thumb = typeof cert?.thumbprint_sha256 === 'string' ? cert.thumbprint_sha256 : fallbackThumb;
+    if (typeof thumb !== 'string' || !SHA256_RE.test(thumb)) return null;
+    const data: Record<string, unknown> = { fingerprint_sha256: thumb };
+    if (typeof cert?.subject?.CN === 'string') data.subject_common_name = cert.subject.CN;
+    const issuer = [cert?.issuer?.O, cert?.issuer?.CN].filter((x: unknown) => typeof x === 'string' && x);
+    if (issuer.length) data.issuer = issuer.join(' — ');
+    if (typeof cert?.serial_number === 'string') data.serial_number = cert.serial_number;
+    const nb = certTime(cert?.validity?.not_before);
+    const na = certTime(cert?.validity?.not_after);
+    if (nb) data.not_before = nb;
+    if (na) data.not_after = na;
+    const names = sanDomains(cert?.extensions?.subject_alternative_name);
+    if (names.length) data.san_count = names.length;
+    return data;
+}
+
 // SSH host-key fingerprints come in two spellings of the same 32-byte SHA-256: OpenSSH's
 // 'SHA256:<43 base64 chars>' (what VirusTotal port_info reports) and 64 hex (what the type pack's
 // ssh_host_key.fingerprint_sha256 requires — the host refuses anything else). MEASURED 2026-10-10:
@@ -305,9 +365,8 @@ export function nodeSpecFromVt(obj: any): NodeSpec | null {
             if (!id || !isIp(id)) return null;
             const data: Record<string, unknown> = { ip_address: id };
             if (typeof a.country === 'string' && a.country) data.country_code = a.country;
-            // infrastructure declares asn a STRING ('AS13335', what the Community pack writes); VT's
-            // number passed through is refused by the host's type check, ending the run on the first IP.
-            if (typeof a.asn === 'number' && Number.isFinite(a.asn)) data.asn = `AS${a.asn}`;
+            const asn = asnLabel(a.asn); // declared string 'AS<n>'; VT sends a number — see asnNumber
+            if (asn) data.asn = asn;
             if (typeof a.as_owner === 'string' && a.as_owner) data.organization = a.as_owner;
             return { type: 'infrastructure.ip_address', data: { ...data, ...verdictCounts(a) } };
         }
