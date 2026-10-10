@@ -152,6 +152,40 @@ export function clampParam(v: unknown, def: number, min: number, max: number): n
     return Math.min(max, Math.max(min, Number.isFinite(n) && n > 0 ? Math.floor(n) : def));
 }
 
+// SSH host-key fingerprints come in two spellings of the same 32-byte SHA-256: OpenSSH's
+// 'SHA256:<43 base64 chars>' (what VirusTotal port_info reports) and 64 hex (what the type pack's
+// ssh_host_key.fingerprint_sha256 requires — the host refuses anything else). MEASURED 2026-10-10:
+// VT's `fingerprint:` search matches ONLY the OpenSSH spelling — 'SHA256:93mv…' found the two
+// testbed hosts sharing K_A, the same key as hex 'f779af09…' found none.
+const SSH_B64_RE = /^(?:SHA256:)?([A-Za-z0-9+/]{43})=?$/i;
+
+/** Either spelling → 64 lowercase hex, or null. */
+export function sshFpHex(v: unknown): string | null {
+    const s = String(v ?? '').trim();
+    if (SHA256_RE.test(s)) return s.toLowerCase();
+    const m = SSH_B64_RE.exec(s);
+    if (!m) return null;
+    let bin: string;
+    try {
+        bin = atob(`${m[1]}=`);
+    } catch {
+        return null;
+    }
+    if (bin.length !== 32) return null;
+    let hex = '';
+    for (let i = 0; i < bin.length; i++) hex += bin.charCodeAt(i).toString(16).padStart(2, '0');
+    return hex;
+}
+
+/** Either spelling → 'SHA256:<base64, unpadded>' (the form VT search matches), or null. */
+export function sshFpOpenSsh(v: unknown): string | null {
+    const hex = sshFpHex(v);
+    if (!hex) return null;
+    let bin = '';
+    for (let i = 0; i < 64; i += 2) bin += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16));
+    return `SHA256:${btoa(bin).replace(/=+$/, '')}`;
+}
+
 /** The v3 URL object id: base64url of the URL with padding stripped. */
 export function urlId(u: string): string {
     const bytes = new TextEncoder().encode(u);
@@ -182,6 +216,32 @@ export async function ensureNode(ctx: HostContext, type: string, data: Record<st
 }
 export async function ensureEdge(ctx: HostContext, from: string, to: string, label: string): Promise<void> {
     await ctx.graph!.createEdge!({ from, to, label });
+}
+
+/**
+ * Edges for one subject, ONE per directed pair. The backend allows a single edge per
+ * (project, from, to): a second create on the same pair in the same run is dropped at commit as a
+ * duplicate, so its label would be lost. A writer that can reach one target two ways (a file that
+ * both contacts and embeds a host) collects the labels here and writes one edge carrying both.
+ */
+export type EdgePairs = Map<string, { from: string; to: string; labels: string[] }>;
+
+/** Propose `label` on from → to. Returns 'pair' for a new pair, 'label' for a new label on a known pair, null for a repeat. */
+export function addPair(pairs: EdgePairs, from: string, to: string, label: string): 'pair' | 'label' | null {
+    const key = `${from}\u0000${to}`;
+    const p = pairs.get(key);
+    if (!p) {
+        pairs.set(key, { from, to, labels: [label] });
+        return 'pair';
+    }
+    if (p.labels.includes(label)) return null;
+    p.labels.push(label);
+    return 'label';
+}
+
+/** Write every collected pair as one edge, its labels joined by '; '. */
+export async function linkPairs(ctx: HostContext, pairs: EdgePairs): Promise<void> {
+    for (const p of pairs.values()) await ensureEdge(ctx, p.from, p.to, p.labels.join('; '));
 }
 
 /** The VirusTotal object path for a graph node, or null when the node carries nothing VT can look up. */
@@ -245,7 +305,9 @@ export function nodeSpecFromVt(obj: any): NodeSpec | null {
             if (!id || !isIp(id)) return null;
             const data: Record<string, unknown> = { ip_address: id };
             if (typeof a.country === 'string' && a.country) data.country_code = a.country;
-            if (typeof a.asn === 'number') data.asn = a.asn;
+            // infrastructure declares asn a STRING ('AS13335', what the Community pack writes); VT's
+            // number passed through is refused by the host's type check, ending the run on the first IP.
+            if (typeof a.asn === 'number' && Number.isFinite(a.asn)) data.asn = `AS${a.asn}`;
             if (typeof a.as_owner === 'string' && a.as_owner) data.organization = a.as_owner;
             return { type: 'infrastructure.ip_address', data: { ...data, ...verdictCounts(a) } };
         }

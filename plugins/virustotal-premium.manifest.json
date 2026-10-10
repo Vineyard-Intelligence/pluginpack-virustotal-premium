@@ -2,8 +2,8 @@
   "identifier": "run.vineyard.pluginpacks.virustotal_premium",
   "content_type": "vineyard:pluginpack",
   "name": "VirusTotal Premium",
-  "version": "0.1.1",
-  "description": "VirusTotal Premium-API pivots: internet-scanning port data (vt_port_info, vt_port_history), Intelligence search (vt_search, vt_search_from_node) for pivoting a shared SSH host key / certificate / JARM back to its siblings, and historical certificates (vt_relationships). Needs the analyst's own VirusTotal Premium API key (VirusTotal Enterprise / Google Threat Intelligence); a community key cannot read these. Desktop only.",
+  "version": "0.2.0",
+  "description": "VirusTotal Premium-API pivots. Infrastructure: internet-scanning port data and per-port history (vt_port_info, vt_port_history), historical certificates (vt_relationships), WHOIS history with registrant and name-server pivots (vt_whois_history), and the files and URLs tied to a host (vt_host_files, vt_host_urls). Intelligence search, typed or built from a node — shared SSH host key, certificate, JARM, WHOIS registrant, a string inside files, or file similarity (vt_search, vt_search_from_node). Files: the IPs/domains/URLs a sample contacts, embeds or was distributed from (vt_file_network), its related samples (vt_file_relatives), and its sandbox MITRE techniques, YARA/Sigma/IDS matches and family (vt_file_behaviour). Needs the analyst's own VirusTotal Premium API key (VirusTotal Enterprise / Google Threat Intelligence); a community key cannot read these. Desktop only.",
   "author": {
     "name": "VINEYARD",
     "url": "https://vineyard.run"
@@ -27,8 +27,8 @@
       "identifier": "run.vineyard.plugins.vt_port_info",
       "content_type": "vineyard:plugin",
       "name": "VT Port Info",
-      "version": "0.1.0",
-      "description": "Reads VirusTotal's internet-scanning port data for each selected IP Address (Premium key only) and writes its observable surface: vt_open_ports, vt_services (product per port), vt_closed_ports (VT keeps closed/recently-closed ports — a timestamped record of a port going down), vt_jarm and vt_ports_scanned (freshness). Materialises each SSH host key as an SSH Host Key node linked 'presents host key', so it can be pivoted with VT Search. A community key returns no port data and the run says so. Desktop only.",
+      "version": "0.2.0",
+      "description": "Reads VirusTotal's internet-scanning port data for each selected IP Address (Premium key only) and writes its observable surface: vt_open_ports, vt_services (product per port), vt_closed_ports (VT keeps closed/recently-closed ports — a timestamped record of a port going down), vt_jarm and vt_ports_scanned (freshness). Materialises each SSH host key as an SSH Host Key node linked 'presents host key' (SHA-256 as hex, VirusTotal's OpenSSH spelling kept as vt_fingerprint), so it can be pivoted with VT Search from Node. A community key returns no port data and the run says so. Desktop only.",
       "icon": "ethernet-port",
       "platforms": {
         "primary": "desktop",
@@ -197,8 +197,8 @@
       "identifier": "run.vineyard.plugins.vt_search_from_node",
       "content_type": "vineyard:plugin",
       "name": "VT Search from Node",
-      "version": "0.1.0",
-      "description": "Pivots from each selected SSH Host Key, TLS Certificate, IP Address or Domain by building a VirusTotal Intelligence query from it and adding the hosts that match, linked back to the source node. SSH host key and JARM pivot on 'fingerprint:', a certificate on its subject or thumbprint, a domain on 'ssl_subject:'. Use it to find the other hosts carrying a shared key or certificate without writing the query by hand. Needs a VirusTotal Premium key; each pivot costs intelligence quota. Desktop only.",
+      "version": "0.2.0",
+      "description": "Pivots from each selected node by building a VirusTotal Intelligence query from it and adding what matches, the matches of the pivot's target linked back to the source. Pivot 'auto' picks the natural query per type: an SSH Host Key or an IP Address's JARM on fingerprint: (hosts linked 'shares SSH host key (VT)' / 'shares JARM (VT)'), a TLS Certificate on its subject or thumbprint ('shares certificate subject (VT)' / 'shares certificate thumbprint (VT)'), a Domain on ssl_subject: ('certificate names this domain (VT)'), an Email Address or Organization on whois: (domains linked 'WHOIS names this email (VT)' / 'WHOIS names this organization (VT)'), a File Hash on its vhash, else imphash, else main icon (files linked 'shares vhash (VT)' / 'shares imphash (VT)' / 'shares main icon (VT)'), a URL on content: (files linked 'contains this string (VT content search)'). Pivot 'content' finds the files containing a Domain, IP Address or URL string ('contains this string (VT content search)'); 'whois' finds the domains whose WHOIS names a Domain ('WHOIS mentions this domain (VT)'), Email Address or Organization; 'imphash', 'vhash' and 'icon' pick that File Hash pivot. VirusTotal's pseudonymised organization names, truncated emails and privacy-proxy placeholders are skipped. Each pivot costs intelligence quota. Needs a VirusTotal Premium key. Desktop only.",
       "icon": "git-fork",
       "platforms": {
         "primary": "desktop",
@@ -215,6 +215,20 @@
       "params": {
         "type": "object",
         "properties": {
+          "pivot": {
+            "type": "string",
+            "title": "Pivot",
+            "enum": [
+              "auto",
+              "content",
+              "whois",
+              "imphash",
+              "vhash",
+              "icon"
+            ],
+            "default": "auto",
+            "description": "auto: the natural pivot per node type — SSH host key / JARM → fingerprint, certificate → subject or thumbprint, domain → ssl_subject, email / organization → whois, file → vhash (else imphash, else main icon), URL → content. content: files containing the Domain, IP or URL string. whois: domains whose WHOIS names the Domain, Email or Organization. imphash / vhash / icon: files sharing the File Hash's import hash, VirusTotal structural hash or main icon. A node the chosen pivot does not apply to is skipped."
+          },
           "limit": {
             "type": "number",
             "title": "Max results",
@@ -246,6 +260,26 @@
             "typepack": "run.vineyard.typepacks.infrastructure",
             "category": "infrastructure",
             "name": "domain"
+          },
+          {
+            "typepack": "run.vineyard.typepacks.identity",
+            "category": "identity",
+            "name": "email_address"
+          },
+          {
+            "typepack": "run.vineyard.typepacks.identity",
+            "category": "identity",
+            "name": "organization"
+          },
+          {
+            "typepack": "run.vineyard.typepacks.threat",
+            "category": "threat",
+            "name": "file_hash"
+          },
+          {
+            "typepack": "run.vineyard.typepacks.infrastructure",
+            "category": "web",
+            "name": "url"
           }
         ],
         "produces": [
@@ -253,6 +287,16 @@
             "typepack": "run.vineyard.typepacks.infrastructure",
             "category": "infrastructure",
             "name": "ip_address"
+          },
+          {
+            "typepack": "run.vineyard.typepacks.infrastructure",
+            "category": "infrastructure",
+            "name": "domain"
+          },
+          {
+            "typepack": "run.vineyard.typepacks.threat",
+            "category": "threat",
+            "name": "file_hash"
           }
         ]
       },
@@ -369,7 +413,7 @@
       "identifier": "run.vineyard.plugins.vt_relationships",
       "content_type": "vineyard:plugin",
       "name": "VT Historical Certificates",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "description": "Walks VirusTotal's historical SSL/TLS certificates for each selected IP Address or Domain (Premium relationship) and adds each certificate it presented over time as a TLS Certificate linked 'presented certificate', with its SHA-256 thumbprint. This recovers rotated or expired certificates that a current-cert pivot misses. Needs a VirusTotal Premium key. Desktop only.",
       "icon": "file-clock",
       "platforms": {
@@ -431,6 +475,650 @@
               "GET"
             ],
             "purpose": "Read VirusTotal historical certificates"
+          }
+        ],
+        "config": [
+          {
+            "key": "api_key",
+            "label": "VirusTotal Premium API Key",
+            "type": "string",
+            "secret": true,
+            "optional": false
+          }
+        ]
+      },
+      "lifecycle": {
+        "persistence": "opt-in",
+        "controls": [
+          "progress",
+          "cancel"
+        ],
+        "progress": "determinate"
+      }
+    },
+    {
+      "identifier": "run.vineyard.plugins.vt_whois_history",
+      "content_type": "vineyard:plugin",
+      "name": "VT WHOIS History",
+      "version": "0.2.0",
+      "description": "Reads VirusTotal's WHOIS history for each selected Domain or IP Address and writes the changes as a timeline onto it: vt_whois_history (registrar, registrant organization and email, name servers per change — the RIR holder, net name and range for an IP) and vt_whois_snapshots. For a Domain it also adds each registrant email as an Email Address linked 'registrant email (WHOIS history)' (VirusTotal's pseudonymised addresses are kept with vt_pseudonymised — they are still searchable), each registrant organization as an Organization linked 'registrant organization (WHOIS history)', and each name server as a Domain linked 'name server (WHOIS history)'. Privacy-proxy placeholders, empty values such as N/A, truncated emails and 16-hex pseudonymised names are skipped. Needs a VirusTotal Premium key. Desktop only.",
+      "icon": "scroll-text",
+      "platforms": {
+        "primary": "desktop",
+        "web": {
+          "runtime": "sandbox-js",
+          "entry": "dist/pack.mjs"
+        },
+        "desktop": {
+          "runtime": "sandbox-js",
+          "entry": "dist/pack.mjs",
+          "min_app_version": "0.1.0"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "number",
+            "title": "Snapshots per node",
+            "description": "How many of the most recent WHOIS snapshots to read per node (1–100, default 20).",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 20
+          }
+        }
+      },
+      "io": {
+        "consumes": [
+          {
+            "typepack": "run.vineyard.typepacks.infrastructure",
+            "category": "infrastructure",
+            "name": "domain"
+          },
+          {
+            "typepack": "run.vineyard.typepacks.infrastructure",
+            "category": "infrastructure",
+            "name": "ip_address"
+          }
+        ],
+        "produces": [
+          {
+            "typepack": "run.vineyard.typepacks.identity",
+            "category": "identity",
+            "name": "email_address"
+          },
+          {
+            "typepack": "run.vineyard.typepacks.identity",
+            "category": "identity",
+            "name": "organization"
+          },
+          {
+            "typepack": "run.vineyard.typepacks.infrastructure",
+            "category": "infrastructure",
+            "name": "domain"
+          }
+        ]
+      },
+      "scopes": {
+        "graph": [
+          "node:read",
+          "node:create",
+          "node:update",
+          "edge:create"
+        ],
+        "network": [
+          {
+            "endpoint": "https://www.virustotal.com/api/v3",
+            "methods": [
+              "GET"
+            ],
+            "purpose": "Read VirusTotal historical WHOIS"
+          }
+        ],
+        "config": [
+          {
+            "key": "api_key",
+            "label": "VirusTotal Premium API Key",
+            "type": "string",
+            "secret": true,
+            "optional": false
+          }
+        ]
+      },
+      "lifecycle": {
+        "persistence": "opt-in",
+        "controls": [
+          "progress",
+          "cancel"
+        ],
+        "progress": "determinate"
+      }
+    },
+    {
+      "identifier": "run.vineyard.plugins.vt_host_files",
+      "content_type": "vineyard:plugin",
+      "name": "VT Host Files",
+      "version": "0.2.0",
+      "description": "For each selected IP Address, Domain or URL, reads the files VirusTotal ties to it and adds each as a File Hash (hashes, file type, detection counts, threat label): files that contact it, linked file → host 'communicates with' (malware using it as C2); files it served, linked host → file 'served file'; and, when ticked, files whose content names it, linked file → host 'references'. A file that both contacts and names the host gets one file → host edge carrying both labels ('communicates with; references'). Listed hashes VirusTotal holds no report for are skipped and counted as unreported. Needs a VirusTotal Premium key. Desktop only.",
+      "icon": "files",
+      "platforms": {
+        "primary": "desktop",
+        "web": {
+          "runtime": "sandbox-js",
+          "entry": "dist/pack.mjs"
+        },
+        "desktop": {
+          "runtime": "sandbox-js",
+          "entry": "dist/pack.mjs",
+          "min_app_version": "0.1.0"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "communicating": {
+            "type": "boolean",
+            "title": "Communicating files",
+            "default": true,
+            "description": "Files that contact this host — malware using it as C2."
+          },
+          "downloaded": {
+            "type": "boolean",
+            "title": "Downloaded files",
+            "default": true,
+            "description": "Files VirusTotal saw served from this host."
+          },
+          "referrer": {
+            "type": "boolean",
+            "title": "Referrer files",
+            "default": false,
+            "description": "Files whose content references this host."
+          },
+          "limit": {
+            "type": "number",
+            "title": "Max files per relationship",
+            "description": "Files to read per relationship for each node (1–200, default 20). Every 40 costs one request.",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 20
+          }
+        }
+      },
+      "io": {
+        "consumes": [
+          {
+            "typepack": "run.vineyard.typepacks.infrastructure",
+            "category": "infrastructure",
+            "name": "ip_address"
+          },
+          {
+            "typepack": "run.vineyard.typepacks.infrastructure",
+            "category": "infrastructure",
+            "name": "domain"
+          },
+          {
+            "typepack": "run.vineyard.typepacks.infrastructure",
+            "category": "web",
+            "name": "url"
+          }
+        ],
+        "produces": [
+          {
+            "typepack": "run.vineyard.typepacks.threat",
+            "category": "threat",
+            "name": "file_hash"
+          }
+        ]
+      },
+      "scopes": {
+        "graph": [
+          "node:read",
+          "node:create",
+          "node:update",
+          "edge:create"
+        ],
+        "network": [
+          {
+            "endpoint": "https://www.virustotal.com/api/v3",
+            "methods": [
+              "GET"
+            ],
+            "purpose": "Read the files VirusTotal relates to a host"
+          }
+        ],
+        "config": [
+          {
+            "key": "api_key",
+            "label": "VirusTotal Premium API Key",
+            "type": "string",
+            "secret": true,
+            "optional": false
+          }
+        ]
+      },
+      "lifecycle": {
+        "persistence": "opt-in",
+        "controls": [
+          "progress",
+          "cancel"
+        ],
+        "progress": "determinate"
+      }
+    },
+    {
+      "identifier": "run.vineyard.plugins.vt_host_urls",
+      "content_type": "vineyard:plugin",
+      "name": "VT Host URLs",
+      "version": "0.2.0",
+      "description": "For each selected IP Address or Domain, reads the URLs VirusTotal has seen on it and adds each as a URL (page title, HTTP status, final URL, detection counts) linked host → URL 'hosts URL'. Needs a VirusTotal Premium key. Desktop only.",
+      "icon": "link-2",
+      "platforms": {
+        "primary": "desktop",
+        "web": {
+          "runtime": "sandbox-js",
+          "entry": "dist/pack.mjs"
+        },
+        "desktop": {
+          "runtime": "sandbox-js",
+          "entry": "dist/pack.mjs",
+          "min_app_version": "0.1.0"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "number",
+            "title": "Max URLs per node",
+            "description": "URLs to read for each node (1–200, default 20). Every 40 costs one request.",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 20
+          }
+        }
+      },
+      "io": {
+        "consumes": [
+          {
+            "typepack": "run.vineyard.typepacks.infrastructure",
+            "category": "infrastructure",
+            "name": "ip_address"
+          },
+          {
+            "typepack": "run.vineyard.typepacks.infrastructure",
+            "category": "infrastructure",
+            "name": "domain"
+          }
+        ],
+        "produces": [
+          {
+            "typepack": "run.vineyard.typepacks.infrastructure",
+            "category": "web",
+            "name": "url"
+          }
+        ]
+      },
+      "scopes": {
+        "graph": [
+          "node:read",
+          "node:create",
+          "node:update",
+          "edge:create"
+        ],
+        "network": [
+          {
+            "endpoint": "https://www.virustotal.com/api/v3",
+            "methods": [
+              "GET"
+            ],
+            "purpose": "Read the URLs VirusTotal has seen on a host"
+          }
+        ],
+        "config": [
+          {
+            "key": "api_key",
+            "label": "VirusTotal Premium API Key",
+            "type": "string",
+            "secret": true,
+            "optional": false
+          }
+        ]
+      },
+      "lifecycle": {
+        "persistence": "opt-in",
+        "controls": [
+          "progress",
+          "cancel"
+        ],
+        "progress": "determinate"
+      }
+    },
+    {
+      "identifier": "run.vineyard.plugins.vt_file_network",
+      "content_type": "vineyard:plugin",
+      "name": "VT File Network",
+      "version": "0.2.0",
+      "description": "For each selected File Hash, reads VirusTotal's network relationships and adds the IP Addresses, Domains and URLs around it: what the file contacted when detonated in VirusTotal's sandboxes (linked 'contacts (sandbox)'), what is embedded in it as strings (linked 'embeds'), and where it was seen distributed in the wild (linked 'distributed from (in the wild)'). An entity found more than one way gets one edge naming each, e.g. 'contacts (sandbox); embeds'. Reverse-DNS (in-addr.arpa) lookups are dropped. Needs a VirusTotal Premium key. Desktop only.",
+      "icon": "network",
+      "platforms": {
+        "primary": "desktop",
+        "web": {
+          "runtime": "sandbox-js",
+          "entry": "dist/pack.mjs"
+        },
+        "desktop": {
+          "runtime": "sandbox-js",
+          "entry": "dist/pack.mjs",
+          "min_app_version": "0.1.0"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "contacted": {
+            "type": "boolean",
+            "title": "Contacted (sandbox)",
+            "default": true,
+            "description": "IPs/domains/URLs the file contacted when detonated in VirusTotal's sandboxes."
+          },
+          "embedded": {
+            "type": "boolean",
+            "title": "Embedded",
+            "default": true,
+            "description": "IPs/domains/URLs found as strings inside the file."
+          },
+          "itw": {
+            "type": "boolean",
+            "title": "In the wild",
+            "default": true,
+            "description": "Where the file was seen distributed in the wild."
+          },
+          "limit": {
+            "type": "number",
+            "title": "Max per relationship",
+            "description": "Objects read per relationship (1–100, default 20).",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 20
+          }
+        }
+      },
+      "io": {
+        "consumes": [
+          {
+            "typepack": "run.vineyard.typepacks.threat",
+            "category": "threat",
+            "name": "file_hash"
+          }
+        ],
+        "produces": [
+          {
+            "typepack": "run.vineyard.typepacks.infrastructure",
+            "category": "infrastructure",
+            "name": "ip_address"
+          },
+          {
+            "typepack": "run.vineyard.typepacks.infrastructure",
+            "category": "infrastructure",
+            "name": "domain"
+          },
+          {
+            "typepack": "run.vineyard.typepacks.infrastructure",
+            "category": "web",
+            "name": "url"
+          }
+        ]
+      },
+      "scopes": {
+        "graph": [
+          "node:read",
+          "node:create",
+          "node:update",
+          "edge:create"
+        ],
+        "network": [
+          {
+            "endpoint": "https://www.virustotal.com/api/v3",
+            "methods": [
+              "GET"
+            ],
+            "purpose": "Read a file's network relationships from VirusTotal"
+          }
+        ],
+        "config": [
+          {
+            "key": "api_key",
+            "label": "VirusTotal Premium API Key",
+            "type": "string",
+            "secret": true,
+            "optional": false
+          }
+        ]
+      },
+      "lifecycle": {
+        "persistence": "opt-in",
+        "controls": [
+          "progress",
+          "cancel"
+        ],
+        "progress": "determinate"
+      }
+    },
+    {
+      "identifier": "run.vineyard.plugins.vt_file_relatives",
+      "content_type": "vineyard:plugin",
+      "name": "VT File Relatives",
+      "version": "0.2.0",
+      "description": "For each selected File Hash, reads VirusTotal's file relationships and adds the related files as File Hashes: files VirusTotal finds similar (linked 'similar to (VT)'; the file itself is never linked), files that launched it (linked 'executed'), files it dropped when detonated (linked 'dropped'), and — when switched on — archives that contain it and files bundled inside it (linked 'contains'). A file related more than one way in the same direction gets one edge naming each, e.g. 'executed; contains'. Needs a VirusTotal Premium key. Desktop only.",
+      "icon": "git-compare",
+      "platforms": {
+        "primary": "desktop",
+        "web": {
+          "runtime": "sandbox-js",
+          "entry": "dist/pack.mjs"
+        },
+        "desktop": {
+          "runtime": "sandbox-js",
+          "entry": "dist/pack.mjs",
+          "min_app_version": "0.1.0"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "similar": {
+            "type": "boolean",
+            "title": "Similar files",
+            "default": true,
+            "description": "Files VirusTotal clusters as similar to this one (same family, rebuilt or repacked)."
+          },
+          "execution_parents": {
+            "type": "boolean",
+            "title": "Execution parents",
+            "default": true,
+            "description": "Files that launched this file when detonated — droppers, installers, archives."
+          },
+          "dropped": {
+            "type": "boolean",
+            "title": "Dropped files",
+            "default": true,
+            "description": "Files this file wrote to disk when detonated."
+          },
+          "compressed_parents": {
+            "type": "boolean",
+            "title": "Compressed parents",
+            "default": false,
+            "description": "Archives that contain this file — often hundreds for a popular sample."
+          },
+          "bundled": {
+            "type": "boolean",
+            "title": "Bundled files",
+            "default": false,
+            "description": "Files packed inside this file when it is an archive or installer."
+          },
+          "limit": {
+            "type": "number",
+            "title": "Max per relationship",
+            "description": "Objects read per relationship (1–100, default 20).",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 20
+          }
+        }
+      },
+      "io": {
+        "consumes": [
+          {
+            "typepack": "run.vineyard.typepacks.threat",
+            "category": "threat",
+            "name": "file_hash"
+          }
+        ],
+        "produces": [
+          {
+            "typepack": "run.vineyard.typepacks.threat",
+            "category": "threat",
+            "name": "file_hash"
+          }
+        ]
+      },
+      "scopes": {
+        "graph": [
+          "node:read",
+          "node:create",
+          "node:update",
+          "edge:create"
+        ],
+        "network": [
+          {
+            "endpoint": "https://www.virustotal.com/api/v3",
+            "methods": [
+              "GET"
+            ],
+            "purpose": "Read a file's related files from VirusTotal"
+          }
+        ],
+        "config": [
+          {
+            "key": "api_key",
+            "label": "VirusTotal Premium API Key",
+            "type": "string",
+            "secret": true,
+            "optional": false
+          }
+        ]
+      },
+      "lifecycle": {
+        "persistence": "opt-in",
+        "controls": [
+          "progress",
+          "cancel"
+        ],
+        "progress": "determinate"
+      }
+    },
+    {
+      "identifier": "run.vineyard.plugins.vt_file_behaviour",
+      "content_type": "vineyard:plugin",
+      "name": "VT File Behaviour",
+      "version": "0.2.0",
+      "description": "For each selected File Hash, reads VirusTotal's file report and its sandboxes' MITRE ATT&CK trees and adds what they found: ATT&CK techniques as Attack Patterns linked 'exhibits (sandbox)' (a technique VirusTotal reports under a retired ID and its current one is one Attack Pattern, kept under the current ID), crowdsourced YARA, Sigma and IDS hits as Detection Signatures linked 'matches YARA rule', 'matches Sigma rule' and 'triggers IDS rule', and the top AV family names as Malware linked 'classified as'. Writes vt_threat_label, vt_threat_category, vt_sandbox_verdicts and vt_mitre_sandboxes onto the file. Needs a VirusTotal Premium key. Desktop only.",
+      "icon": "activity",
+      "platforms": {
+        "primary": "desktop",
+        "web": {
+          "runtime": "sandbox-js",
+          "entry": "dist/pack.mjs"
+        },
+        "desktop": {
+          "runtime": "sandbox-js",
+          "entry": "dist/pack.mjs",
+          "min_app_version": "0.1.0"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "mitre": {
+            "type": "boolean",
+            "title": "MITRE ATT&CK techniques",
+            "default": true,
+            "description": "Techniques VirusTotal's sandboxes observed when detonating the file."
+          },
+          "yara": {
+            "type": "boolean",
+            "title": "YARA rules",
+            "default": true,
+            "description": "Crowdsourced YARA rules that match the file."
+          },
+          "sigma": {
+            "type": "boolean",
+            "title": "Sigma rules",
+            "default": true,
+            "description": "Sigma rules that matched the sandboxes' event logs."
+          },
+          "ids": {
+            "type": "boolean",
+            "title": "IDS alerts",
+            "default": false,
+            "description": "IDS (Snort/Suricata) alerts on the sandboxes' network capture — noisy (ICMP, Tor exit lists)."
+          },
+          "classification": {
+            "type": "boolean",
+            "title": "Threat classification",
+            "default": true,
+            "description": "Top AV family names as Malware, plus the threat label, category and sandbox verdicts on the file."
+          },
+          "max_per_kind": {
+            "type": "number",
+            "title": "Max per kind",
+            "description": "Techniques / YARA / Sigma / IDS entries kept per file, each (1–100, default 25).",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 25
+          }
+        }
+      },
+      "io": {
+        "consumes": [
+          {
+            "typepack": "run.vineyard.typepacks.threat",
+            "category": "threat",
+            "name": "file_hash"
+          }
+        ],
+        "produces": [
+          {
+            "typepack": "run.vineyard.typepacks.threat",
+            "category": "threat",
+            "name": "attack_pattern"
+          },
+          {
+            "typepack": "run.vineyard.typepacks.threat",
+            "category": "threat",
+            "name": "signature"
+          },
+          {
+            "typepack": "run.vineyard.typepacks.threat",
+            "category": "threat",
+            "name": "malware"
+          }
+        ]
+      },
+      "scopes": {
+        "graph": [
+          "node:read",
+          "node:create",
+          "node:update",
+          "edge:create"
+        ],
+        "network": [
+          {
+            "endpoint": "https://www.virustotal.com/api/v3",
+            "methods": [
+              "GET"
+            ],
+            "purpose": "Read a file's report and sandbox ATT&CK trees from VirusTotal"
           }
         ],
         "config": [

@@ -27,36 +27,50 @@ import {
     GRAPH_SCOPES,
     LIFECYCLE,
     PLATFORMS,
+    SHA256_RE,
     VtError,
     abortErr,
+    clampParam,
     dateFromUnix,
     datetimeFromUnix,
     ensureEdge,
     ensureNode,
+    identityType,
     infra,
     isIp,
     itemMiss,
     joinCapped,
     netScope,
+    nodeFromVt,
     selectedNodesOfTypes,
+    sshFpHex,
+    sshFpOpenSsh,
     threatType,
     updateNode,
     vtGet,
+    vtPathFor,
     webType,
 } from './vt-core';
+import { completeEmail, isJunkValue, isPlaceholder, isPseudonym, vtWhoisHistory } from './whois';
+import { vtHostFiles, vtHostUrls } from './host';
+import { vtFileBehaviour, vtFileNetwork, vtFileRelatives } from './file';
 
 // ---- shared: VT Intelligence search → nodes -------------------------------------------------
 // One place both vt_search (free-form) and vt_search_from_node (query built from a node) go through.
-// Runs the query VERBATIM, pages via meta.cursor up to `limit`, and adds a node per matched entity.
-// Returns the created IP node ids so a caller can link them back to the pivot source.
+// Runs the query VERBATIM, pages via meta.cursor up to `limit`, and adds a node per matched entity
+// through the shared VT-object mapping. Returns the created nodes per entity so a caller can link
+// the ones its pivot targets back to the pivot source.
 const SEARCH_MAX = 300;
+type HitEntity = 'ip' | 'domain' | 'url' | 'file';
+const HIT_ENTITY: Record<string, HitEntity> = { ip_address: 'ip', domain: 'domain', url: 'url', file: 'file' };
+const HIT_COUNT = { ip: 'ips', domain: 'domains', url: 'urls', file: 'files' } as const;
 interface SearchOut {
     counts: { matched: number; ips: number; domains: number; urls: number; files: number; other: number };
-    ipNodeIds: string[];
+    hits: Record<HitEntity, GraphNode[]>;
 }
 async function searchToNodes(ctx: HostContext, query: string, limit: number): Promise<SearchOut> {
     const counts = { matched: 0, ips: 0, domains: 0, urls: 0, files: 0, other: 0 };
-    const ipNodeIds: string[] = [];
+    const hits: Record<HitEntity, GraphNode[]> = { ip: [], domain: [], url: [], file: [] };
     const results: Array<{ type?: string; id?: string; attributes?: any }> = [];
     let cursor: string | undefined;
     const want = Math.min(SEARCH_MAX, Math.max(1, limit || 25));
@@ -74,38 +88,18 @@ async function searchToNodes(ctx: HostContext, query: string, limit: number): Pr
     }
     for (const r of results.slice(0, want)) {
         if (ctx.signal?.aborted) throw abortErr();
-        const id = String(r?.id ?? '').trim();
-        if (!id) continue;
+        if (!String(r?.id ?? '').trim()) continue;
         counts.matched++;
-        switch (r?.type) {
-            case 'ip_address':
-                if (isIp(id)) {
-                    const n = await ensureNode(ctx, 'infrastructure.ip_address', { ip_address: id });
-                    ipNodeIds.push(n.id);
-                    counts.ips++;
-                }
-                break;
-            case 'domain':
-                if (DOMAIN_RE.test(id)) {
-                    await ensureNode(ctx, 'infrastructure.domain', { domain_name: id });
-                    counts.domains++;
-                }
-                break;
-            case 'url': {
-                const url = typeof r?.attributes?.url === 'string' ? r.attributes.url : id;
-                await ensureNode(ctx, 'web.url', { url });
-                counts.urls++;
-                break;
-            }
-            case 'file':
-                await ensureNode(ctx, 'threat.file_hash', { sha256: id });
-                counts.files++;
-                break;
-            default:
-                counts.other++;
+        const entity = HIT_ENTITY[String(r?.type)];
+        const n = entity ? await nodeFromVt(ctx, r) : null;
+        if (!entity || !n) {
+            counts.other++; // an entity the graph does not hold, or one that maps to nothing (an arpa name)
+            continue;
         }
+        hits[entity].push(n);
+        counts[HIT_COUNT[entity]]++;
     }
-    return { counts, ipNodeIds };
+    return { counts, hits };
 }
 
 const PARAM_QUERY = {
@@ -137,9 +131,9 @@ export const vtPortInfo = definePlugin({
         identifier: 'run.vineyard.plugins.vt_port_info',
         content_type: 'vineyard:plugin',
         name: 'VT Port Info',
-        version: '0.1.0',
+        version: '0.2.0',
         description:
-            "Reads VirusTotal's internet-scanning port data for each selected IP Address (Premium key only) and writes its observable surface: vt_open_ports, vt_services (product per port), vt_closed_ports (VT keeps closed/recently-closed ports — a timestamped record of a port going down), vt_jarm and vt_ports_scanned (freshness). Materialises each SSH host key as an SSH Host Key node linked 'presents host key', so it can be pivoted with VT Search. A community key returns no port data and the run says so. Desktop only.",
+            "Reads VirusTotal's internet-scanning port data for each selected IP Address (Premium key only) and writes its observable surface: vt_open_ports, vt_services (product per port), vt_closed_ports (VT keeps closed/recently-closed ports — a timestamped record of a port going down), vt_jarm and vt_ports_scanned (freshness). Materialises each SSH host key as an SSH Host Key node linked 'presents host key' (SHA-256 as hex, VirusTotal's OpenSSH spelling kept as vt_fingerprint), so it can be pivoted with VT Search from Node. A community key returns no port data and the run says so. Desktop only.",
         icon: 'ethernet-port',
         platforms: PLATFORMS,
         io: { consumes: [infra('ip_address')], produces: [infra('ssh_host_key')] },
@@ -180,7 +174,7 @@ export const vtPortInfo = definePlugin({
             const open: number[] = [];
             const closed: string[] = [];
             const services: string[] = [];
-            const sshKeys = new Set<string>();
+            const sshKeys = new Map<string, string>(); // hex (the type pack's form) → VT's OpenSSH spelling
             let lastSeenMax = 0;
             for (const p of portInfo) {
                 const port = Number(p?.port);
@@ -196,7 +190,9 @@ export const vtPortInfo = definePlugin({
                     services.push(`${port}:${product}${version}`);
                 }
                 const fp = svc?.ssh?.host_key_fingerprint;
-                if (typeof fp === 'string' && fp.trim()) sshKeys.add(fp.trim());
+                const hex = sshFpHex(fp);
+                if (hex) sshKeys.set(hex, sshFpOpenSsh(hex)!);
+                else if (typeof fp === 'string' && fp.trim()) ctx.progress?.log?.(`${ip}:${port}: unreadable SSH host-key fingerprint ${fp.trim()} — skipped`);
             }
             open.sort((a, b) => a - b);
             const patch: Record<string, unknown> = {};
@@ -213,8 +209,8 @@ export const vtPortInfo = definePlugin({
                 counts.enriched++;
             }
             counts.open_ports += open.length;
-            for (const fp of sshKeys) {
-                const keyNode = await ensureNode(ctx, 'infrastructure.ssh_host_key', { fingerprint_sha256: fp });
+            for (const [hex, openssh] of sshKeys) {
+                const keyNode = await ensureNode(ctx, 'infrastructure.ssh_host_key', { fingerprint_sha256: hex, vt_fingerprint: openssh });
                 await ensureEdge(ctx, node.id, keyNode.id, 'presents host key');
                 counts.ssh_keys++;
             }
@@ -261,94 +257,300 @@ export const vtSearch = definePlugin({
 });
 
 // =============================================================================================
-// 3. vt_search_from_node — build the pivot query from a selected certificate / SSH key / IP / domain
+// 3. vt_search_from_node — build the pivot query from a selected node
 // =============================================================================================
 // The ergonomic wrapper around vt_search: take what you already have and find its siblings, without
-// writing the query by hand. Each created IP is linked back to the source node so the pivot is
-// visible in the graph.
-//   ssh_host_key (fingerprint_sha256)  -> entity:ip fingerprint:"<fp>"       (validated: finds K_A/K_B siblings)
-//   certificate (fingerprint_sha256)   -> entity:ip ssl_thumbprint:<fp>, or ssl_subject:<name> when the node names one
-//   ip_address (vt_jarm)               -> entity:ip fingerprint:"<jarm>"     (JARM family)
-//   domain (domain_name)               -> entity:ip ssl_subject:"<domain>"   (hosts whose cert names it)
-function buildPivot(node: GraphNode): { query: string; label: string } | null {
+// writing the query by hand. Only the hits of the pivot's TARGET entity are linked back to the
+// source (hit → source), so the pivot is visible in the graph and nothing incidental is.
+// 'auto' — the natural pivot per type:
+//   ssh_host_key (fingerprint_sha256)  -> entity:ip fingerprint:"SHA256:<b64>"            (validated: finds K_A/K_B siblings)
+//   certificate (fingerprint_sha256)   -> entity:ip ssl_subject:"<name>" when the node names a domain, else ssl_thumbprint:<fp>
+//   ip_address (vt_jarm)               -> entity:ip fingerprint:"<jarm>"          (JARM family)
+//   domain (domain_name)               -> entity:ip ssl_subject:"<domain>"        (hosts whose cert names it)
+//   email_address / organization       -> entity:domain whois:"<value>"           (domains the registrant also holds)
+//   file_hash                          -> vhash:"<vhash>", else imphash:<imphash>, else main_icon_dhash:<dhash>
+//                                         (read with one GET /files/{hash}: siblings built from the same code / imports / icon)
+//   url                                -> content:"<url>"                         (files that embed the URL)
+// Explicit modes: 'content' (files containing a Domain/IP/URL string — MEASURED: content:"avsvmcloud.com"
+// and content:"74.119.239.234" return files), 'whois' (domains whose WHOIS names a Domain/Email/Organization),
+// 'imphash' / 'vhash' / 'icon' (one File Hash similarity pivot). MEASURED: an imphash/vhash search returns
+// the source file itself among its hits, so a hit is compared to the source by node id AND by SHA-256.
+// VirusTotal's 16-hex pseudonymised names and truncated 'xxxxs@' emails match nothing (measured 0 hits)
+// and privacy-proxy placeholders / 'N/A'-style values match everything, so none of them is searched —
+// with the narrow placeholder test, since 'Private Layer INC' or a proxy vendor is a real pivot.
+// A 403 may cover one query family (say content:) rather than the whole key, and 'auto' mixes four
+// families in one run, so a 403 skips that family for the rest of the run; the run ends with the
+// Premium message only when no search succeeded at all (nothing was staged, so nothing is lost).
+type PivotMode = 'auto' | 'content' | 'whois' | 'imphash' | 'vhash' | 'icon';
+const PIVOT_MODES: PivotMode[] = ['auto', 'content', 'whois', 'imphash', 'vhash', 'icon'];
+interface Pivot {
+    query: string;
+    label: string;
+    /** Only hits of this entity are linked back to the source. */
+    target: HitEntity;
+    /** The source file's SHA-256 as VirusTotal reports it — the file a similarity search finds first. */
+    selfSha?: string;
+}
+
+/** The value trimmed, or '' when it is empty or could break out of the query's double quotes (a quote, a backslash escaping the closing one, a control character). */
+function quotable(v: unknown): string {
+    const s = String(v ?? '').trim();
+    return s && !/["\\\x00-\x1f\x7f]/.test(s) ? s : '';
+}
+/** A certificate thumbprint (SHA-1 or SHA-256 hex, colons allowed) as bare lowercase hex — it goes into the query unquoted. */
+function thumbprint(v: unknown): string {
+    const s = String(v ?? '').trim();
+    if (!/^[A-Fa-f0-9:]{40,95}$/.test(s)) return '';
+    const hex = s.replace(/:/g, '').toLowerCase();
+    return hex.length === 40 || hex.length === 64 ? hex : '';
+}
+/** A short handle for a node in a log line. */
+function nodeKey(node: GraphNode): string {
+    const d = node.data || {};
+    return String(d.domain_name ?? d.ip_address ?? d.url ?? d.email ?? d.name ?? d.sha256 ?? d.md5 ?? d.fingerprint_sha256 ?? node.id);
+}
+function domainValue(node: GraphNode): string {
+    const dom = String(node.data?.domain_name ?? node.data?.name ?? '').trim().toLowerCase();
+    return DOMAIN_RE.test(dom) ? dom : '';
+}
+
+// The 0.1 pivots: a host-side value → the IPs that share it.
+function hostPivot(node: GraphNode): Pivot | null {
     const d = node.data || {};
     if (node.type === 'infrastructure.ssh_host_key') {
-        const fp = String(d.fingerprint_sha256 ?? d.fingerprint ?? '').trim();
-        if (fp) return { query: `entity:ip fingerprint:"${fp}"`, label: 'shares SSH host key (VT)' };
+        // The node holds hex (type pack) or OpenSSH; VT search matches only the OpenSSH spelling.
+        const fp = sshFpOpenSsh(d.fingerprint_sha256 ?? d.vt_fingerprint ?? d.fingerprint);
+        if (fp) return { query: `entity:ip fingerprint:"${fp}"`, label: 'shares SSH host key (VT)', target: 'ip' };
     } else if (node.type === 'infrastructure.certificate') {
         // subject_common_name is the type pack's property; subject_cn is what 0.1.x wrote — still read.
-        const name = String(d.subject_common_name ?? d.subject_cn ?? d.common_name ?? d.cn ?? '').trim();
-        if (name && DOMAIN_RE.test(name)) return { query: `entity:ip ssl_subject:"${name}"`, label: 'shares certificate subject (VT)' };
-        const fp = String(d.fingerprint_sha256 ?? '').trim();
-        if (fp) return { query: `entity:ip ssl_thumbprint:${fp}`, label: 'shares certificate thumbprint (VT)' };
+        const name = quotable(d.subject_common_name ?? d.subject_cn ?? d.common_name ?? d.cn);
+        if (name && DOMAIN_RE.test(name)) return { query: `entity:ip ssl_subject:"${name}"`, label: 'shares certificate subject (VT)', target: 'ip' };
+        const fp = thumbprint(d.fingerprint_sha256);
+        if (fp) return { query: `entity:ip ssl_thumbprint:${fp}`, label: 'shares certificate thumbprint (VT)', target: 'ip' };
     } else if (node.type === 'infrastructure.ip_address') {
-        const jarm = String(d.vt_jarm ?? d.jarm ?? d.shodan_jarm ?? '').trim();
-        if (jarm) return { query: `entity:ip fingerprint:"${jarm}"`, label: 'shares JARM (VT)' };
+        const jarm = quotable(d.vt_jarm ?? d.jarm ?? d.shodan_jarm);
+        if (jarm) return { query: `entity:ip fingerprint:"${jarm}"`, label: 'shares JARM (VT)', target: 'ip' };
     } else if (node.type === 'infrastructure.domain') {
-        const dom = String(d.domain_name ?? d.name ?? '').trim();
-        if (dom && DOMAIN_RE.test(dom)) return { query: `entity:ip ssl_subject:"${dom}"`, label: 'certificate names this domain (VT)' };
+        const dom = domainValue(node);
+        if (dom) return { query: `entity:ip ssl_subject:"${dom}"`, label: 'certificate names this domain (VT)', target: 'ip' };
     }
     return null;
 }
+
+function contentPivot(node: GraphNode): Pivot | null {
+    let value = '';
+    if (node.type === 'infrastructure.domain') {
+        value = domainValue(node);
+    } else if (node.type === 'infrastructure.ip_address') {
+        const ip = String(node.data?.ip_address ?? '').trim();
+        value = isIp(ip) ? ip : '';
+    } else if (node.type === 'web.url') {
+        value = String(node.data?.url ?? '');
+    }
+    value = quotable(value);
+    return value ? { query: `content:"${value}"`, label: 'contains this string (VT content search)', target: 'file' } : null;
+}
+
+function whoisPivot(node: GraphNode): Pivot | null {
+    let value = '';
+    let label = '';
+    if (node.type === 'identity.email_address') {
+        // A pseudonymised but complete address IS searchable (measured: 5 hits); a truncated one is not.
+        const email = completeEmail(node.data?.email);
+        value = email && !isPlaceholder(email) ? email : '';
+        label = 'WHOIS names this email (VT)';
+    } else if (node.type === 'identity.organization') {
+        const name = String(node.data?.name ?? '').trim();
+        value = name && !isPseudonym(name) && !isPlaceholder(name) && !isJunkValue(name) ? name : '';
+        label = 'WHOIS names this organization (VT)';
+    } else if (node.type === 'infrastructure.domain') {
+        value = domainValue(node);
+        label = 'WHOIS mentions this domain (VT)';
+    }
+    value = quotable(value);
+    return value ? { query: `entity:domain whois:"${value}"`, label, target: 'domain' } : null;
+}
+
+// One GET /files/{hash} reads the similarity values; 'auto' takes the first the file has.
+async function filePivot(ctx: HostContext, node: GraphNode, mode: 'auto' | 'imphash' | 'vhash' | 'icon'): Promise<Pivot | null> {
+    const path = vtPathFor(node);
+    if (!path) return null;
+    const body = (await vtGet(ctx, path)) as any;
+    const a = body?.data?.attributes ?? {};
+    const sha = String(a.sha256 ?? node.data?.sha256 ?? '').toLowerCase();
+    const selfSha = SHA256_RE.test(sha) ? sha : undefined;
+    const vhash = quotable(a.vhash);
+    const imphash = String(a.pe_info?.imphash ?? '').trim().toLowerCase();
+    const dhash = String(a.main_icon?.dhash ?? '').trim().toLowerCase();
+    const options: Record<'vhash' | 'imphash' | 'icon', { query: string; label: string } | null> = {
+        vhash: vhash ? { query: `vhash:"${vhash}"`, label: 'shares vhash (VT)' } : null,
+        imphash: /^[a-f0-9]{32}$/.test(imphash) ? { query: `imphash:${imphash}`, label: 'shares imphash (VT)' } : null,
+        icon: /^[a-f0-9]{16}$/.test(dhash) ? { query: `main_icon_dhash:${dhash}`, label: 'shares main icon (VT)' } : null,
+    };
+    for (const k of mode === 'auto' ? (['vhash', 'imphash', 'icon'] as const) : [mode]) {
+        const o = options[k];
+        if (o) return { ...o, target: 'file', selfSha };
+    }
+    return null;
+}
+
+async function buildPivot(ctx: HostContext, node: GraphNode, mode: PivotMode): Promise<Pivot | null> {
+    if (mode === 'content') return contentPivot(node);
+    if (mode === 'whois') return whoisPivot(node);
+    if (mode !== 'auto') return node.type === 'threat.file_hash' ? filePivot(ctx, node, mode) : null;
+    switch (node.type) {
+        case 'identity.email_address':
+        case 'identity.organization':
+            return whoisPivot(node);
+        case 'threat.file_hash':
+            return filePivot(ctx, node, 'auto');
+        case 'web.url':
+            return contentPivot(node);
+        default:
+            return hostPivot(node);
+    }
+}
+
+/** Is this search hit the pivot source itself? By node id, and by identity value (SHA-256 for a file). */
+function isSource(hit: GraphNode, src: GraphNode, selfSha?: string): boolean {
+    if (hit.id === src.id) return true;
+    if (hit.type !== src.type) return false;
+    const h = hit.data || {};
+    const s = src.data || {};
+    switch (hit.type) {
+        case 'threat.file_hash': {
+            const sha = String(h.sha256 ?? '').toLowerCase();
+            return !!sha && (sha === selfSha || sha === String(s.sha256 ?? '').trim().toLowerCase());
+        }
+        case 'infrastructure.domain':
+            return String(h.domain_name ?? '') === domainValue(src);
+        case 'infrastructure.ip_address':
+            return String(h.ip_address ?? '') === String(s.ip_address ?? '').trim();
+        case 'web.url':
+            return String(h.url ?? '') === String(s.url ?? '').trim();
+        default:
+            return false;
+    }
+}
+
+const FROM_NODE_TYPES = [
+    'infrastructure.ssh_host_key',
+    'infrastructure.certificate',
+    'infrastructure.ip_address',
+    'infrastructure.domain',
+    'identity.email_address',
+    'identity.organization',
+    'threat.file_hash',
+    'web.url',
+];
 
 export const vtSearchFromNode = definePlugin({
     manifest: {
         identifier: 'run.vineyard.plugins.vt_search_from_node',
         content_type: 'vineyard:plugin',
         name: 'VT Search from Node',
-        version: '0.1.0',
+        version: '0.2.0',
         description:
-            "Pivots from each selected SSH Host Key, TLS Certificate, IP Address or Domain by building a VirusTotal Intelligence query from it and adding the hosts that match, linked back to the source node. SSH host key and JARM pivot on 'fingerprint:', a certificate on its subject or thumbprint, a domain on 'ssl_subject:'. Use it to find the other hosts carrying a shared key or certificate without writing the query by hand. Needs a VirusTotal Premium key; each pivot costs intelligence quota. Desktop only.",
+            "Pivots from each selected node by building a VirusTotal Intelligence query from it and adding what matches, the matches of the pivot's target linked back to the source. Pivot 'auto' picks the natural query per type: an SSH Host Key or an IP Address's JARM on fingerprint: (hosts linked 'shares SSH host key (VT)' / 'shares JARM (VT)'), a TLS Certificate on its subject or thumbprint ('shares certificate subject (VT)' / 'shares certificate thumbprint (VT)'), a Domain on ssl_subject: ('certificate names this domain (VT)'), an Email Address or Organization on whois: (domains linked 'WHOIS names this email (VT)' / 'WHOIS names this organization (VT)'), a File Hash on its vhash, else imphash, else main icon (files linked 'shares vhash (VT)' / 'shares imphash (VT)' / 'shares main icon (VT)'), a URL on content: (files linked 'contains this string (VT content search)'). Pivot 'content' finds the files containing a Domain, IP Address or URL string ('contains this string (VT content search)'); 'whois' finds the domains whose WHOIS names a Domain ('WHOIS mentions this domain (VT)'), Email Address or Organization; 'imphash', 'vhash' and 'icon' pick that File Hash pivot. VirusTotal's pseudonymised organization names, truncated emails and privacy-proxy placeholders are skipped. Each pivot costs intelligence quota. Needs a VirusTotal Premium key. Desktop only.",
         icon: 'git-fork',
         platforms: PLATFORMS,
-        params: { type: 'object', properties: { limit: PARAM_LIMIT } },
+        params: {
+            type: 'object',
+            properties: {
+                pivot: {
+                    type: 'string',
+                    title: 'Pivot',
+                    enum: PIVOT_MODES,
+                    default: 'auto',
+                    description:
+                        "auto: the natural pivot per node type — SSH host key / JARM → fingerprint, certificate → subject or thumbprint, domain → ssl_subject, email / organization → whois, file → vhash (else imphash, else main icon), URL → content. content: files containing the Domain, IP or URL string. whois: domains whose WHOIS names the Domain, Email or Organization. imphash / vhash / icon: files sharing the File Hash's import hash, VirusTotal structural hash or main icon. A node the chosen pivot does not apply to is skipped.",
+                },
+                limit: PARAM_LIMIT,
+            },
+        },
         io: {
-            consumes: [infra('ssh_host_key'), infra('certificate'), infra('ip_address'), infra('domain')],
-            produces: [infra('ip_address')],
+            consumes: [
+                infra('ssh_host_key'),
+                infra('certificate'),
+                infra('ip_address'),
+                infra('domain'),
+                identityType('email_address'),
+                identityType('organization'),
+                threatType('file_hash'),
+                webType('url'),
+            ],
+            produces: [infra('ip_address'), infra('domain'), threatType('file_hash')],
         },
         scopes: { graph: GRAPH_SCOPES, network: netScope('Pivot a node through VirusTotal Intelligence search'), config: [API_KEY_CONFIG] },
         lifecycle: LIFECYCLE,
     },
     async run(ctx: HostContext): Promise<RunResult> {
-        const nodes = await selectedNodesOfTypes(ctx, [
-            'infrastructure.ssh_host_key',
-            'infrastructure.certificate',
-            'infrastructure.ip_address',
-            'infrastructure.domain',
-        ]);
-        const limit = Number(ctx.params?.limit) || 25;
-        const counts = { pivoted: 0, skipped: 0, hosts: 0, linked: 0 };
-        for (const node of nodes) {
+        const nodes = await selectedNodesOfTypes(ctx, FROM_NODE_TYPES);
+        const mode = PIVOT_MODES.find((m) => m === ctx.params?.pivot) ?? 'auto';
+        const limit = clampParam(ctx.params?.limit, 25, 1, SEARCH_MAX);
+        const counts = { pivoted: 0, skipped: 0, misses: 0, hosts: 0, domains: 0, urls: 0, files: 0, linked: 0 };
+        const forbidden = new Set<string>(); // query families ('fingerprint', 'whois', 'content', …) this key got a 403 on
+        for (let i = 0; i < nodes.length; i++) {
+            const node = nodes[i];
             if (ctx.signal?.aborted) throw abortErr();
-            const pivot = buildPivot(node);
+            ctx.progress?.set?.({ message: `pivot ${node.type}`, percent: i / nodes.length });
+            let pivot: Pivot | null;
+            try {
+                pivot = await buildPivot(ctx, node, mode); // a File Hash pivot reads /files/{hash} first
+            } catch (e) {
+                const miss = itemMiss(e);
+                if (miss) {
+                    counts.misses++;
+                    ctx.progress?.log?.(`${vtPathFor(node) ?? node.id}: ${miss}`);
+                    continue;
+                }
+                throw e;
+            }
             if (!pivot) {
                 counts.skipped++;
+                ctx.progress?.log?.(`${nodeKey(node)}: no searchable value for pivot '${mode}'`);
                 continue;
             }
-            ctx.progress?.set?.({ message: pivot.query, percent: (counts.pivoted + counts.skipped) / nodes.length });
+            const family = pivot.query.replace(/^entity:\w+\s+/, '').split(':')[0];
+            if (forbidden.has(family)) {
+                counts.misses++; // already logged on the first 403
+                continue;
+            }
+            ctx.progress?.set?.({ message: pivot.query, percent: i / nodes.length });
             let out: SearchOut;
             try {
                 out = await searchToNodes(ctx, pivot.query, limit);
             } catch (e) {
-                if (e instanceof VtError && e.status === 403) throw new Error('VT Intelligence search needs a Premium key (this key returned 403).');
                 const miss = itemMiss(e);
                 if (miss) {
-                    counts.skipped++;
-                    ctx.progress?.log?.(`${pivot.query}: ${miss}`);
+                    counts.misses++;
+                    if (e instanceof VtError && e.status === 403) {
+                        forbidden.add(family);
+                        ctx.progress?.log?.(`${family}: searches return 403 on this key — skipping the remaining ${family}: pivots`);
+                    } else {
+                        ctx.progress?.log?.(`${pivot.query}: ${miss}`);
+                    }
                     continue;
                 }
                 throw e;
             }
             counts.pivoted++;
             counts.hosts += out.counts.ips;
-            for (const ipId of out.ipNodeIds) {
-                if (ipId === node.id) continue; // don't link a node to itself
-                await ensureEdge(ctx, ipId, node.id, pivot.label);
+            counts.domains += out.counts.domains;
+            counts.urls += out.counts.urls;
+            counts.files += out.counts.files;
+            for (const hit of out.hits[pivot.target]) {
+                if (isSource(hit, node, pivot.selfSha)) continue; // never link a node to itself
+                await ensureEdge(ctx, hit.id, node.id, pivot.label);
                 counts.linked++;
             }
         }
+        if (!counts.pivoted && forbidden.size) throw new Error('VT Intelligence search needs a Premium key (this key returned 403).');
         return {
-            summary: `${counts.pivoted} pivot(s): ${counts.hosts} host(s), ${counts.linked} link(s)${counts.skipped ? `, ${counts.skipped} skipped` : ''}`,
+            summary:
+                `${counts.pivoted} pivot(s): ${counts.hosts} host(s), ${counts.domains} domain(s), ${counts.files} file(s), ${counts.linked} link(s)` +
+                (counts.skipped ? `, ${counts.skipped} skipped` : '') +
+                (counts.misses ? `, ${counts.misses} missed (see log)` : ''),
             counts,
         };
     },
@@ -452,7 +654,7 @@ export const vtRelationships = definePlugin({
         identifier: 'run.vineyard.plugins.vt_relationships',
         content_type: 'vineyard:plugin',
         name: 'VT Historical Certificates',
-        version: '0.1.0',
+        version: '0.2.0',
         description:
             "Walks VirusTotal's historical SSL/TLS certificates for each selected IP Address or Domain (Premium relationship) and adds each certificate it presented over time as a TLS Certificate linked 'presented certificate', with its SHA-256 thumbprint. This recovers rotated or expired certificates that a current-cert pivot misses. Needs a VirusTotal Premium key. Desktop only.",
         icon: 'file-clock',
@@ -524,14 +726,26 @@ const pack: VineyardPluginPack & {
     identifier: 'run.vineyard.pluginpacks.virustotal_premium',
     content_type: 'vineyard:pluginpack',
     name: 'VirusTotal Premium',
-    version: '0.1.1',
+    version: '0.2.0',
     description:
-        "VirusTotal Premium-API pivots: internet-scanning port data (vt_port_info, vt_port_history), Intelligence search (vt_search, vt_search_from_node) for pivoting a shared SSH host key / certificate / JARM back to its siblings, and historical certificates (vt_relationships). Needs the analyst's own VirusTotal Premium API key (VirusTotal Enterprise / Google Threat Intelligence); a community key cannot read these. Desktop only.",
+        "VirusTotal Premium-API pivots. Infrastructure: internet-scanning port data and per-port history (vt_port_info, vt_port_history), historical certificates (vt_relationships), WHOIS history with registrant and name-server pivots (vt_whois_history), and the files and URLs tied to a host (vt_host_files, vt_host_urls). Intelligence search, typed or built from a node — shared SSH host key, certificate, JARM, WHOIS registrant, a string inside files, or file similarity (vt_search, vt_search_from_node). Files: the IPs/domains/URLs a sample contacts, embeds or was distributed from (vt_file_network), its related samples (vt_file_relatives), and its sandbox MITRE techniques, YARA/Sigma/IDS matches and family (vt_file_behaviour). Needs the analyst's own VirusTotal Premium API key (VirusTotal Enterprise / Google Threat Intelligence); a community key cannot read these. Desktop only.",
     author: { name: 'VINEYARD', url: 'https://vineyard.run' },
     license: 'Apache-2.0',
     icon: 'scan-search',
     platforms: PLATFORMS,
-    plugins: [vtPortInfo, vtSearch, vtSearchFromNode, vtPortHistory, vtRelationships],
+    plugins: [
+        vtPortInfo,
+        vtSearch,
+        vtSearchFromNode,
+        vtPortHistory,
+        vtRelationships,
+        vtWhoisHistory,
+        vtHostFiles,
+        vtHostUrls,
+        vtFileNetwork,
+        vtFileRelatives,
+        vtFileBehaviour,
+    ],
 };
 
 export const virustotalPremiumPack = definePluginPack(pack);
