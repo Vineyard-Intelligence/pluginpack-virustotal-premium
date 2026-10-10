@@ -1,0 +1,438 @@
+{
+  "identifier": "run.vineyard.pluginpacks.virustotal_premium",
+  "content_type": "vineyard:pluginpack",
+  "name": "VirusTotal Premium",
+  "version": "0.1.0",
+  "description": "VirusTotal Premium-API pivots: internet-scanning port data (vt_port_info, vt_port_history), Intelligence search (vt_search, vt_search_from_node) for pivoting a shared SSH host key / certificate / JARM back to its siblings, and historical certificates (vt_relationships). Needs the analyst's own VirusTotal Premium API key (VirusTotal Enterprise / Google Threat Intelligence); a community key cannot read these. Desktop only.",
+  "plugins": [
+    {
+      "identifier": "run.vineyard.plugins.vt_port_info",
+      "content_type": "vineyard:plugin",
+      "name": "VT Port Info",
+      "version": "0.1.0",
+      "description": "Reads VirusTotal's internet-scanning port data for each selected IP Address (Premium key only) and writes its observable surface: vt_open_ports, vt_services (product per port), vt_closed_ports (VT keeps closed/recently-closed ports — a timestamped record of a port going down), vt_jarm and vt_ports_scanned (freshness). Materialises each SSH host key as an SSH Host Key node linked 'presents host key', so it can be pivoted with VT Search. A community key returns no port data and the run says so. Desktop only.",
+      "icon": "ethernet-port",
+      "platforms": {
+        "primary": "desktop",
+        "web": {
+          "runtime": "sandbox-js",
+          "entry": "dist/pack.mjs"
+        },
+        "desktop": {
+          "runtime": "sandbox-js",
+          "entry": "dist/pack.mjs",
+          "min_app_version": "0.1.0"
+        }
+      },
+      "io": {
+        "consumes": [
+          {
+            "typepack": "run.vineyard.typepacks.infrastructure",
+            "category": "infrastructure",
+            "name": "ip_address"
+          }
+        ],
+        "produces": [
+          {
+            "typepack": "run.vineyard.typepacks.infrastructure",
+            "category": "infrastructure",
+            "name": "ssh_host_key"
+          }
+        ]
+      },
+      "scopes": {
+        "graph": [
+          "node:read",
+          "node:create",
+          "node:update",
+          "edge:create"
+        ],
+        "network": [
+          {
+            "endpoint": "https://www.virustotal.com/api/v3",
+            "methods": [
+              "GET"
+            ],
+            "purpose": "Read VirusTotal port_info for an IP"
+          }
+        ],
+        "config": [
+          {
+            "key": "api_key",
+            "label": "VirusTotal Premium API Key",
+            "type": "string",
+            "secret": true,
+            "optional": false
+          }
+        ]
+      },
+      "lifecycle": {
+        "persistence": "opt-in",
+        "controls": [
+          "progress",
+          "cancel"
+        ],
+        "progress": "determinate"
+      }
+    },
+    {
+      "identifier": "run.vineyard.plugins.vt_search",
+      "content_type": "vineyard:plugin",
+      "name": "VT Search",
+      "version": "0.1.0",
+      "description": "Runs a VirusTotal Intelligence search query (as typed, like a Censys/Shodan search) and adds what it matches: hosts as IP Addresses, domains as Domains, URLs as URLs, files as File Hashes. The query decides the entity and the pivot — e.g. 'entity:ip fingerprint:\"<ssh host key or JARM>\"', 'entity:ip port_service_product[443]:nginx open_port:22', 'entity:ip ssl_subject:example.com'. Needs a VirusTotal Premium key; each search costs intelligence quota. Desktop only.",
+      "icon": "search",
+      "platforms": {
+        "primary": "desktop",
+        "web": {
+          "runtime": "sandbox-js",
+          "entry": "dist/pack.mjs"
+        },
+        "desktop": {
+          "runtime": "sandbox-js",
+          "entry": "dist/pack.mjs",
+          "min_app_version": "0.1.0"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "VT Intelligence query",
+            "description": "A VirusTotal Intelligence search query, run verbatim. Start with the entity: 'entity:ip' (also entity:domain, entity:url, entity:file). Premium internet-scanning modifiers: port / open_port / closed_port / port_status / port_protocol / port_service_product / port_service_version / port_service_cpe / port_banner / os_type / device_type / fingerprint (matches the SSH host-key fingerprint and JARM) / ssl_subject / ssl_thumbprint. Pin a condition to one port with brackets, e.g. port_service_product[80]:nginx. Full syntax: VT Intelligence search documentation."
+          },
+          "limit": {
+            "type": "number",
+            "title": "Max results",
+            "description": "Maximum entities to add (1–300, default 25).",
+            "minimum": 1,
+            "maximum": 300,
+            "default": 25
+          }
+        },
+        "required": [
+          "query"
+        ]
+      },
+      "io": {
+        "consumes": [],
+        "produces": [
+          {
+            "typepack": "run.vineyard.typepacks.infrastructure",
+            "category": "infrastructure",
+            "name": "ip_address"
+          },
+          {
+            "typepack": "run.vineyard.typepacks.infrastructure",
+            "category": "infrastructure",
+            "name": "domain"
+          },
+          {
+            "typepack": "run.vineyard.typepacks.infrastructure",
+            "category": "web",
+            "name": "url"
+          },
+          {
+            "typepack": "run.vineyard.typepacks.threat",
+            "category": "threat",
+            "name": "file_hash"
+          }
+        ]
+      },
+      "scopes": {
+        "graph": [
+          "node:read",
+          "node:create",
+          "node:update",
+          "edge:create"
+        ],
+        "network": [
+          {
+            "endpoint": "https://www.virustotal.com/api/v3",
+            "methods": [
+              "GET"
+            ],
+            "purpose": "Run a VirusTotal Intelligence search"
+          }
+        ],
+        "config": [
+          {
+            "key": "api_key",
+            "label": "VirusTotal Premium API Key",
+            "type": "string",
+            "secret": true,
+            "optional": false
+          }
+        ]
+      },
+      "lifecycle": {
+        "persistence": "opt-in",
+        "controls": [
+          "progress",
+          "cancel"
+        ],
+        "progress": "determinate"
+      }
+    },
+    {
+      "identifier": "run.vineyard.plugins.vt_search_from_node",
+      "content_type": "vineyard:plugin",
+      "name": "VT Search from Node",
+      "version": "0.1.0",
+      "description": "Pivots from each selected SSH Host Key, TLS Certificate, IP Address or Domain by building a VirusTotal Intelligence query from it and adding the hosts that match, linked back to the source node. SSH host key and JARM pivot on 'fingerprint:', a certificate on its subject or thumbprint, a domain on 'ssl_subject:'. Use it to find the other hosts carrying a shared key or certificate without writing the query by hand. Needs a VirusTotal Premium key; each pivot costs intelligence quota. Desktop only.",
+      "icon": "git-fork",
+      "platforms": {
+        "primary": "desktop",
+        "web": {
+          "runtime": "sandbox-js",
+          "entry": "dist/pack.mjs"
+        },
+        "desktop": {
+          "runtime": "sandbox-js",
+          "entry": "dist/pack.mjs",
+          "min_app_version": "0.1.0"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "number",
+            "title": "Max results",
+            "description": "Maximum entities to add (1–300, default 25).",
+            "minimum": 1,
+            "maximum": 300,
+            "default": 25
+          }
+        }
+      },
+      "io": {
+        "consumes": [
+          {
+            "typepack": "run.vineyard.typepacks.infrastructure",
+            "category": "infrastructure",
+            "name": "ssh_host_key"
+          },
+          {
+            "typepack": "run.vineyard.typepacks.infrastructure",
+            "category": "infrastructure",
+            "name": "certificate"
+          },
+          {
+            "typepack": "run.vineyard.typepacks.infrastructure",
+            "category": "infrastructure",
+            "name": "ip_address"
+          },
+          {
+            "typepack": "run.vineyard.typepacks.infrastructure",
+            "category": "infrastructure",
+            "name": "domain"
+          }
+        ],
+        "produces": [
+          {
+            "typepack": "run.vineyard.typepacks.infrastructure",
+            "category": "infrastructure",
+            "name": "ip_address"
+          }
+        ]
+      },
+      "scopes": {
+        "graph": [
+          "node:read",
+          "node:create",
+          "node:update",
+          "edge:create"
+        ],
+        "network": [
+          {
+            "endpoint": "https://www.virustotal.com/api/v3",
+            "methods": [
+              "GET"
+            ],
+            "purpose": "Pivot a node through VirusTotal Intelligence search"
+          }
+        ],
+        "config": [
+          {
+            "key": "api_key",
+            "label": "VirusTotal Premium API Key",
+            "type": "string",
+            "secret": true,
+            "optional": false
+          }
+        ]
+      },
+      "lifecycle": {
+        "persistence": "opt-in",
+        "controls": [
+          "progress",
+          "cancel"
+        ],
+        "progress": "determinate"
+      }
+    },
+    {
+      "identifier": "run.vineyard.plugins.vt_port_history",
+      "content_type": "vineyard:plugin",
+      "name": "VT Port History",
+      "version": "0.1.0",
+      "description": "For each selected IP Address, reads VirusTotal's per-port state (first seen, open since, last seen open, current status) for its ports and writes a compact vt_port_history timeline onto the IP. VirusTotal keeps closed ports, so a port that went down shows as RECENTLY-CLOSED with the date it was last open — a forensic timeline the other scanners do not expose. Needs a VirusTotal Premium key. Desktop only.",
+      "icon": "history",
+      "platforms": {
+        "primary": "desktop",
+        "web": {
+          "runtime": "sandbox-js",
+          "entry": "dist/pack.mjs"
+        },
+        "desktop": {
+          "runtime": "sandbox-js",
+          "entry": "dist/pack.mjs",
+          "min_app_version": "0.1.0"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "port": {
+            "type": "number",
+            "title": "Port (optional)",
+            "description": "A single port to read; leave empty to read all ports VirusTotal has seen on the IP.",
+            "minimum": 1,
+            "maximum": 65535
+          }
+        }
+      },
+      "io": {
+        "consumes": [
+          {
+            "typepack": "run.vineyard.typepacks.infrastructure",
+            "category": "infrastructure",
+            "name": "ip_address"
+          }
+        ],
+        "produces": []
+      },
+      "scopes": {
+        "graph": [
+          "node:read",
+          "node:update"
+        ],
+        "network": [
+          {
+            "endpoint": "https://www.virustotal.com/api/v3",
+            "methods": [
+              "GET"
+            ],
+            "purpose": "Read VirusTotal per-port history for an IP"
+          }
+        ],
+        "config": [
+          {
+            "key": "api_key",
+            "label": "VirusTotal Premium API Key",
+            "type": "string",
+            "secret": true,
+            "optional": false
+          }
+        ]
+      },
+      "lifecycle": {
+        "persistence": "opt-in",
+        "controls": [
+          "progress",
+          "cancel"
+        ],
+        "progress": "determinate"
+      }
+    },
+    {
+      "identifier": "run.vineyard.plugins.vt_relationships",
+      "content_type": "vineyard:plugin",
+      "name": "VT Historical Certificates",
+      "version": "0.1.0",
+      "description": "Walks VirusTotal's historical SSL/TLS certificates for each selected IP Address or Domain (Premium relationship) and adds each certificate it presented over time as a TLS Certificate linked 'presented certificate', with its SHA-256 thumbprint. This recovers rotated or expired certificates that a current-cert pivot misses. Needs a VirusTotal Premium key. Desktop only.",
+      "icon": "file-clock",
+      "platforms": {
+        "primary": "desktop",
+        "web": {
+          "runtime": "sandbox-js",
+          "entry": "dist/pack.mjs"
+        },
+        "desktop": {
+          "runtime": "sandbox-js",
+          "entry": "dist/pack.mjs",
+          "min_app_version": "0.1.0"
+        }
+      },
+      "params": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "number",
+            "title": "Max certificates per node",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 40
+          }
+        }
+      },
+      "io": {
+        "consumes": [
+          {
+            "typepack": "run.vineyard.typepacks.infrastructure",
+            "category": "infrastructure",
+            "name": "ip_address"
+          },
+          {
+            "typepack": "run.vineyard.typepacks.infrastructure",
+            "category": "infrastructure",
+            "name": "domain"
+          }
+        ],
+        "produces": [
+          {
+            "typepack": "run.vineyard.typepacks.infrastructure",
+            "category": "infrastructure",
+            "name": "certificate"
+          }
+        ]
+      },
+      "scopes": {
+        "graph": [
+          "node:read",
+          "node:create",
+          "node:update",
+          "edge:create"
+        ],
+        "network": [
+          {
+            "endpoint": "https://www.virustotal.com/api/v3",
+            "methods": [
+              "GET"
+            ],
+            "purpose": "Read VirusTotal historical certificates"
+          }
+        ],
+        "config": [
+          {
+            "key": "api_key",
+            "label": "VirusTotal Premium API Key",
+            "type": "string",
+            "secret": true,
+            "optional": false
+          }
+        ]
+      },
+      "lifecycle": {
+        "persistence": "opt-in",
+        "controls": [
+          "progress",
+          "cancel"
+        ],
+        "progress": "determinate"
+      }
+    }
+  ]
+}
