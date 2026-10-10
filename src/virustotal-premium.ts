@@ -20,152 +20,30 @@
 //
 // Graph writes are STAGED: nothing reaches the graph until the analyst reviews and commits.
 import { definePlugin, definePluginPack } from './sdk';
-import type {
-    ConfigValue,
-    GraphScope,
-    GraphNode,
-    HostContext,
-    NetworkScope,
-    PluginManifest,
-    RunResult,
-    TypeRef,
-    VineyardPluginPack,
-} from './sdk';
-
-const VT_BASE = 'https://www.virustotal.com/api/v3';
-const API_KEY_LABEL = 'VirusTotal Premium API Key';
-
-// ---- shared manifest fragments ---------------------------------------------------------------
-const PLATFORMS: PluginManifest['platforms'] = {
-    primary: 'desktop',
-    web: { runtime: 'sandbox-js', entry: 'dist/pack.mjs' },
-    desktop: { runtime: 'sandbox-js', entry: 'dist/pack.mjs', min_app_version: '0.1.0' },
-};
-const netScope = (purpose: string): NetworkScope[] => [{ endpoint: VT_BASE, methods: ['GET'], purpose }];
-const API_KEY_CONFIG: ConfigValue = { key: 'api_key', label: API_KEY_LABEL, type: 'string', secret: true, optional: false };
-const GRAPH_SCOPES: GraphScope[] = ['node:read', 'node:create', 'node:update', 'edge:create'];
-const LIFECYCLE: NonNullable<PluginManifest['lifecycle']> = {
-    persistence: 'opt-in',
-    controls: ['progress', 'cancel'],
-    progress: 'determinate',
-};
-const infra = (name: string): TypeRef => ({ typepack: 'run.vineyard.typepacks.infrastructure', category: 'infrastructure', name });
-const webType = (name: string): TypeRef => ({ typepack: 'run.vineyard.typepacks.infrastructure', category: 'web', name });
-const threatType = (name: string): TypeRef => ({ typepack: 'run.vineyard.typepacks.threat', category: 'threat', name });
-
-// ---- tiny utilities -------------------------------------------------------------------------
-const abortErr = () => new Error('cancelled');
-const sleep = (ms: number, signal?: AbortSignal): Promise<void> =>
-    new Promise((resolve, reject) => {
-        const timer = setTimeout(finish, ms);
-        function finish() {
-            signal?.removeEventListener('abort', onAbort);
-            resolve();
-        }
-        function onAbort() {
-            clearTimeout(timer);
-            reject(abortErr());
-        }
-        signal?.addEventListener('abort', onAbort, { once: true });
-    });
-
-const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
-const isIp = (v: string): boolean => IPV4_RE.test(v) || (v.includes(':') && /^[0-9a-fA-F:]+$/.test(v));
-const DOMAIN_RE = /^[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}$/;
-
-function vtKey(ctx: HostContext): string {
-    const k = ctx.config?.api_key;
-    if (typeof k !== 'string' || !k.trim()) {
-        throw new Error(`${API_KEY_LABEL} is not set — configure it in the plugin settings first`);
-    }
-    return String(k).trim();
-}
-
-class VtError extends Error {
-    constructor(readonly status: number, readonly code: string, msg: string) {
-        super(`${code}: ${msg} (HTTP ${status})`);
-    }
-}
-
-const backoffMs = (attempt: number, retryAfterSec: number): number =>
-    Math.min(60_000, Number.isFinite(retryAfterSec) && retryAfterSec > 0 ? retryAfterSec * 1000 : 15_000 * 2 ** attempt);
-
-/** One GET against v3 with `x-apikey`. 429 retried; 401 ends the run; 403 is named as a tier problem. */
-async function vtGet(ctx: HostContext, path: string): Promise<unknown> {
-    if (ctx.signal?.aborted) throw abortErr();
-    if (ctx.run?.platform && ctx.run.platform !== 'desktop') {
-        throw new Error('VirusTotal sends no CORS headers — this pack only works in the VINEYARD desktop app');
-    }
-    const key = vtKey(ctx);
-    for (let attempt = 0; ; attempt++) {
-        if (ctx.signal?.aborted) throw abortErr();
-        const res = await ctx.net!.fetch!(VT_BASE + path, { method: 'GET', headers: { 'x-apikey': key } });
-        if (res.status === 429) {
-            if (attempt < 3) {
-                const waitMs = backoffMs(attempt, Number(res.headers?.['retry-after'] ?? NaN));
-                ctx.progress?.log?.(`quota throttle — waiting ${Math.round(waitMs / 1000)}s before retrying`);
-                await sleep(waitMs, ctx.signal);
-                continue;
-            }
-            throw new Error('VirusTotal quota exhausted — retry later or narrow the request.');
-        }
-        if (res.status >= 200 && res.status < 300) return res.json();
-        let code = `HTTP ${res.status}`;
-        let msg = '';
-        try {
-            const j = (await res.json()) as { error?: { code?: string; message?: string } };
-            if (j?.error?.code) code = j.error.code;
-            if (j?.error?.message) msg = j.error.message;
-        } catch {
-            /* non-JSON body */
-        }
-        if (res.status === 401) throw new Error(`VirusTotal rejected this API key (${code})`);
-        throw new VtError(res.status, code, msg);
-    }
-}
-
-/** Why THIS one item was skipped, or null when the error must end the whole run. */
-function itemMiss(e: unknown): string | null {
-    if (!(e instanceof VtError)) return null;
-    if (e.status === 404) return 'no VirusTotal record';
-    if (e.status === 400) return `rejected by VirusTotal (${e.code})`;
-    if (e.status === 403) return 'needs a VirusTotal Premium key';
-    return null;
-}
-
-const datetimeFromUnix = (sec: unknown): string | undefined =>
-    typeof sec === 'number' && Number.isFinite(sec) && sec > 0 ? new Date(sec * 1000).toISOString() : undefined;
-const dateFromUnix = (sec: unknown): string | undefined => datetimeFromUnix(sec)?.slice(0, 10);
-
-const MAX_LISTED = 25;
-function joinCapped(parts: string[], max = MAX_LISTED): string | undefined {
-    if (!parts.length) return undefined;
-    return parts.length <= max ? parts.join(', ') : `${parts.slice(0, max).join(', ')} (+${parts.length - max} more)`;
-}
-
-// ---- graph helpers --------------------------------------------------------------------------
-async function selectedNodesOfTypes(ctx: HostContext, types: string[]): Promise<GraphNode[]> {
-    const out: GraphNode[] = [];
-    for (const id of ctx.input.selection ?? []) {
-        if (ctx.signal?.aborted) throw abortErr();
-        const n = await ctx.graph?.get?.(id);
-        if (n && types.includes(n.type)) out.push(n);
-    }
-    return out;
-}
-async function updateNode(ctx: HostContext, node: GraphNode, patch: Record<string, unknown>): Promise<void> {
-    const delta: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(patch)) {
-        if (v != null && v !== '' && node.data?.[k] !== v) delta[k] = v;
-    }
-    if (Object.keys(delta).length) await ctx.graph!.updateNode!(node.id, delta);
-}
-async function ensureNode(ctx: HostContext, type: string, data: Record<string, unknown>): Promise<GraphNode> {
-    return ctx.graph!.createNode!({ type, data });
-}
-async function ensureEdge(ctx: HostContext, from: string, to: string, label: string): Promise<void> {
-    await ctx.graph!.createEdge!({ from, to, label });
-}
+import type { GraphNode, HostContext, PluginManifest, RunResult, VineyardPluginPack } from './sdk';
+import {
+    API_KEY_CONFIG,
+    DOMAIN_RE,
+    GRAPH_SCOPES,
+    LIFECYCLE,
+    PLATFORMS,
+    VtError,
+    abortErr,
+    dateFromUnix,
+    datetimeFromUnix,
+    ensureEdge,
+    ensureNode,
+    infra,
+    isIp,
+    itemMiss,
+    joinCapped,
+    netScope,
+    selectedNodesOfTypes,
+    threatType,
+    updateNode,
+    vtGet,
+    webType,
+} from './vt-core';
 
 // ---- shared: VT Intelligence search → nodes -------------------------------------------------
 // One place both vt_search (free-form) and vt_search_from_node (query built from a node) go through.
@@ -398,7 +276,8 @@ function buildPivot(node: GraphNode): { query: string; label: string } | null {
         const fp = String(d.fingerprint_sha256 ?? d.fingerprint ?? '').trim();
         if (fp) return { query: `entity:ip fingerprint:"${fp}"`, label: 'shares SSH host key (VT)' };
     } else if (node.type === 'infrastructure.certificate') {
-        const name = String(d.subject_cn ?? d.common_name ?? d.cn ?? '').trim();
+        // subject_common_name is the type pack's property; subject_cn is what 0.1.x wrote — still read.
+        const name = String(d.subject_common_name ?? d.subject_cn ?? d.common_name ?? d.cn ?? '').trim();
         if (name && DOMAIN_RE.test(name)) return { query: `entity:ip ssl_subject:"${name}"`, label: 'shares certificate subject (VT)' };
         const fp = String(d.fingerprint_sha256 ?? '').trim();
         if (fp) return { query: `entity:ip ssl_thumbprint:${fp}`, label: 'shares certificate thumbprint (VT)' };
@@ -608,7 +487,7 @@ export const vtRelationships = definePlugin({
                         if (!thumb) continue;
                         const data: Record<string, unknown> = { fingerprint_sha256: String(thumb) };
                         const cn = a?.subject?.CN;
-                        if (typeof cn === 'string' && cn) data.subject_cn = cn;
+                        if (typeof cn === 'string' && cn) data.subject_common_name = cn;
                         const nb = a?.validity?.not_before;
                         if (typeof nb === 'string' && nb) data.not_before = nb;
                         const certNode = await ensureNode(ctx, 'infrastructure.certificate', data);
