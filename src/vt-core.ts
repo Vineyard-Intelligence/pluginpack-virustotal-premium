@@ -152,14 +152,12 @@ export function clampParam(v: unknown, def: number, min: number, max: number): n
     return Math.min(max, Math.max(min, Number.isFinite(n) && n > 0 ? Math.floor(n) : def));
 }
 
-// ASN has two spellings across the type packs: infrastructure 2.7 declares ip_address.asn and
-// netblock.asn STRINGS ('AS13335'), and autonomous_system.autonomous_system_number an INTEGER.
-// Every pack converts at its own boundary — Shodan parses 'AS…' with a regex for the AS node, Cymru
-// and the Community VT pack format VT's number as `AS${n}` for the IP — because the host converts
-// nothing: validateNodeData refuses a number where a string is declared and a string where an
-// integer is. These two are that boundary for this pack. Whatever comes in (14956, '14956',
-// 'AS14956', 'as 14956'), one canonical form goes out. AS0 is "not routed": as a value it would
-// make every unrouted IP share an ASN (shared-attribute clustering groups by it), so it is null.
+// ASN is a bare integer in every type-pack field that holds one (infrastructure 3.0:
+// ip_address.asn, netblock.asn, autonomous_system.autonomous_system_number) — RFC 5396 asplain,
+// STIX 2.1 autonomous-system.number. 'AS13335' is how people write it, not data. VirusTotal already
+// sends a number; this also accepts '14956' / 'AS14956' / 'as 14956' so any source lands the same.
+// AS0 is "not routed": as a value it would make every unrouted IP share an ASN (shared-attribute
+// clustering groups by it), so it is null.
 export function asnNumber(v: unknown): number | null {
     let n: number;
     if (typeof v === 'number') n = v;
@@ -169,11 +167,6 @@ export function asnNumber(v: unknown): number | null {
         n = Number(m[1]);
     }
     return Number.isInteger(n) && n > 0 && n <= 4294967295 ? n : null;
-}
-/** For ip_address.asn / netblock.asn: 'AS<n>'. */
-export function asnLabel(v: unknown): string | null {
-    const n = asnNumber(v);
-    return n == null ? null : `AS${n}`;
 }
 
 // A VirusTotal certificate object → certificate node data, IDENTICAL to the VirusTotal Community
@@ -365,7 +358,7 @@ export function nodeSpecFromVt(obj: any): NodeSpec | null {
             if (!id || !isIp(id)) return null;
             const data: Record<string, unknown> = { ip_address: id };
             if (typeof a.country === 'string' && a.country) data.country_code = a.country;
-            const asn = asnLabel(a.asn); // declared string 'AS<n>'; VT sends a number — see asnNumber
+            const asn = asnNumber(a.asn);
             if (asn) data.asn = asn;
             if (typeof a.as_owner === 'string' && a.as_owner) data.organization = a.as_owner;
             return { type: 'infrastructure.ip_address', data: { ...data, ...verdictCounts(a) } };

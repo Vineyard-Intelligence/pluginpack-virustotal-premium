@@ -6,7 +6,7 @@
 // Every run goes through hostGraph, which behaves like the app's host bridge where it matters:
 // each createNode is validated against the REAL type packs (typepack-basic, mirroring
 // validate-node.ts) and refused with a throw, same-identity creates merge into one node, and a second
-// edge on a directed (from, to) pair is dropped as a duplicate. A plain mock let a numeric `asn`
+// edge on a directed (from, to) pair is dropped as a duplicate. A plain mock let a mistyped `asn`
 // and a collapsed technique pass silently; this one fails the run the way the app would.
 import { deepStrictEqual } from 'node:assert';
 import { existsSync, readFileSync } from 'node:fs';
@@ -132,7 +132,7 @@ const go = async (plugin, c) => {
 };
 const hostClean = (graph, r) => !r.error && graph.rejected.length === 0 && graph.duplicateEdges.length === 0;
 
-t.check('host mock: refuses a numeric asn on an IP (the type pack declares it a string)', /asn is declared string/.test(validateNode('infrastructure.ip_address', { ip_address: '1.2.3.4', asn: 24309 }) ?? ''));
+t.check("host mock: refuses a string asn on an IP (the type pack declares it an integer)", /asn is declared integer/.test(validateNode('infrastructure.ip_address', { ip_address: '1.2.3.4', asn: 'AS24309' }) ?? ''));
 t.check('host mock: refuses a malware without malware_type and an unknown tactic', !!validateNode('threat.malware', { name: 'x' }) && !!validateNode('threat.attack_pattern', { name: 'x', tactic: 'stealth' }));
 
 const SRC = 'ed01ebfbc9eb5bbea545af4d01bf5f1071661840480439c6e5babe8e080e41aa';
@@ -225,7 +225,7 @@ const ALL_NET_RELS = ['contacted_ips', 'contacted_domains', 'contacted_urls', 'e
     t.check('network: default limit 20 on every call', net.calls.every((c) => new URL(c.url).searchParams.get('limit') === '20'));
     t.check('network: key only in the x-apikey header', net.calls.every((c) => c.headers['x-apikey'] === 'k' && !/apikey|k=k/i.test(new URL(c.url).search)));
     const ip = nodeBy(graph, (d) => d.ip_address === '103.16.203.232');
-    t.check("network: IP node mapped exactly (asn as the type pack's string 'AS24309')", ip?.type === 'infrastructure.ip_address' && same(ip.data, { ip_address: '103.16.203.232', country_code: 'IN', asn: 'AS24309', organization: 'Atria Convergence Technologies Pvt. Ltd. Broadband Internet Service Provider INDIA', vt_malicious: 0, vt_suspicious: 0, vt_harmless: 54, vt_undetected: 38 }));
+    t.check("network: IP node mapped exactly (asn as the type pack's integer 24309)", ip?.type === 'infrastructure.ip_address' && same(ip.data, { ip_address: '103.16.203.232', country_code: 'IN', asn: 24309, organization: 'Atria Convergence Technologies Pvt. Ltd. Broadband Internet Service Provider INDIA', vt_malicious: 0, vt_suspicious: 0, vt_harmless: 54, vt_undetected: 38 }));
     const dom = nodeBy(graph, (d) => d.domain_name === 'dn5t.aw');
     t.check('network: domain node mapped exactly', dom?.type === 'infrastructure.domain' && same(dom.data, { domain_name: 'dn5t.aw', vt_malicious: 0, vt_suspicious: 0, vt_harmless: 53, vt_undetected: 39 }));
     const url = nodeBy(graph, (d) => d.url === 'https://outlook.com/');
