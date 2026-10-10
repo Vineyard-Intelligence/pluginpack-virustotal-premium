@@ -64,7 +64,7 @@ for (const p of pack.plugins) {
     const body = { data: { attributes: {
         jarm: 'JARMVALUE',
         port_info: [
-            { port: 22, status: 'PORT_INFO_STATUS_OPEN', last_seen: 1791608973, latest_analysis: { port_service: { product: 'OpenSSH', version: '8.9', ssh: { host_key_fingerprint: 'SHA256:KA' } } } },
+            { port: 22, status: 'PORT_INFO_STATUS_OPEN', last_seen: 1791608973, latest_analysis: { port_service: { product: 'OpenSSH', version: '8.9', ssh: { host_key_fingerprint: 'SHA256:93mvCQWDCdlDbpFrdWGQrQb4BKMSCsjp/x2tUsCTQbg' } } } },
             { port: 80, status: 'PORT_INFO_STATUS_RECENTLY_CLOSED', last_seen: 1791500000, latest_analysis: { port_service: { product: 'Apache' } } },
         ],
     } } };
@@ -80,7 +80,7 @@ for (const p of pack.plugins) {
     check('port_info: vt_closed_ports records the recently-closed one', /80 \(recently-closed\)/.test(String(patch.vt_closed_ports)));
     check('port_info: vt_services carries product+version', /22:OpenSSH 8.9/.test(String(patch.vt_services)));
     check('port_info: vt_jarm written', patch.vt_jarm === 'JARMVALUE');
-    check('port_info: SSH host key minted + linked', graph.createdNodes.some((n) => n.type === 'infrastructure.ssh_host_key' && n.data.fingerprint_sha256 === 'SHA256:KA') && graph.createdEdges.some((e) => e.label === 'presents host key'));
+    check('port_info: SSH host key minted as hex (type pack) with the OpenSSH spelling kept, + linked', graph.createdNodes.some((n) => n.type === 'infrastructure.ssh_host_key' && n.data.fingerprint_sha256 === 'f779af09058309d9436e916b756190ad06f804a3120ac8e9ff1dad52c09341b8' && n.data.vt_fingerprint === 'SHA256:93mvCQWDCdlDbpFrdWGQrQb4BKMSCsjp/x2tUsCTQbg') && graph.createdEdges.some((e) => e.label === 'presents host key'));
     check('port_info: counts', r.counts.ssh_keys === 1 && r.counts.open_ports === 1);
 }
 
@@ -124,9 +124,9 @@ for (const p of pack.plugins) {
 {
     let askedQuery = '';
     const net = makeNet((u) => { askedQuery = u.searchParams.get('query') ?? ''; return { status: 200, body: { data: [{ type: 'ip_address', id: '5.5.5.5' }] } }; });
-    const graph = makeGraph({ k: { id: 'k', type: 'infrastructure.ssh_host_key', data: { fingerprint_sha256: 'SHA256:KA' } } });
+    const graph = makeGraph({ k: { id: 'k', type: 'infrastructure.ssh_host_key', data: { fingerprint_sha256: 'f779af09058309d9436e916b756190ad06f804a3120ac8e9ff1dad52c09341b8' } } });
     const r = await P['run.vineyard.plugins.vt_search_from_node'].run({ ...RUN, config: KEY, input: { selection: ['k'] }, params: { limit: 5 }, net, graph });
-    check('from_node: SSH key builds a fingerprint: query', /fingerprint:"SHA256:KA"/.test(askedQuery));
+    check('from_node: a hex SSH key node queries VT in the OpenSSH spelling (the only one VT matches)', askedQuery === 'entity:ip fingerprint:"SHA256:93mvCQWDCdlDbpFrdWGQrQb4BKMSCsjp/x2tUsCTQbg"');
     check('from_node: the hit is created and linked back to the source', graph.createdNodes.some((n) => n.data.ip_address === '5.5.5.5') && graph.createdEdges.some((e) => e.to === 'k' && /SSH host key/.test(e.label)));
     check('from_node: counts', r.counts.hosts === 1 && r.counts.linked === 1);
 }
