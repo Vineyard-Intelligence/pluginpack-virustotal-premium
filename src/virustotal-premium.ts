@@ -632,14 +632,28 @@ export const vtRelationships = definePlugin({
 });
 
 // ---- pack --------------------------------------------------------------------------------------
-const pack: VineyardPluginPack = definePluginPack({
+// The pack-level author/license/icon/platforms are not optional decoration: the registry's
+// verify_pinned check compares the catalog entry's claims (icon, platforms) against THIS document
+// at the pinned ref, and a missing field fails the pin — which is what kept 0.1.0 out of the
+// approved list.
+const pack: VineyardPluginPack & {
+    author: { name: string; url: string };
+    license: string;
+    icon: string;
+    platforms: PluginManifest['platforms'];
+} = {
     identifier: 'run.vineyard.pluginpacks.virustotal_premium',
     content_type: 'vineyard:pluginpack',
     name: 'VirusTotal Premium',
-    version: '0.1.0',
+    version: '0.1.1',
     description:
         "VirusTotal Premium-API pivots: internet-scanning port data (vt_port_info, vt_port_history), Intelligence search (vt_search, vt_search_from_node) for pivoting a shared SSH host key / certificate / JARM back to its siblings, and historical certificates (vt_relationships). Needs the analyst's own VirusTotal Premium API key (VirusTotal Enterprise / Google Threat Intelligence); a community key cannot read these. Desktop only.",
+    author: { name: 'VINEYARD', url: 'https://vineyard.run' },
+    license: 'Apache-2.0',
+    icon: 'scan-search',
+    platforms: PLATFORMS,
     plugins: [vtPortInfo, vtSearch, vtSearchFromNode, vtPortHistory, vtRelationships],
-});
+};
 
-export default pack;
+export const virustotalPremiumPack = definePluginPack(pack);
+export default virustotalPremiumPack;
