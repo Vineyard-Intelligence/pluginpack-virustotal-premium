@@ -66,7 +66,7 @@ single-source (Censys) dependence that lost a cluster when Censys was stale can 
 node build.mjs                 # esbuild → dist/pack.mjs
 node gen-manifest.mjs          # dist/pack.mjs → plugins/virustotal-premium.manifest.json
 node test-plugin.mjs           # mock unit tests, original plugins (no network)
-for f in test/*.test.mjs; do node $f; done   # per-module mock tests (whois, pivots, host, file)
+for f in test/*.test.mjs; do node $f; done   # per-module mock tests (core converters, whois, pivots, host, file)
 ```
 
 ## Notes

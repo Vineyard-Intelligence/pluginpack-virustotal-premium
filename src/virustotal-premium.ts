@@ -30,6 +30,7 @@ import {
     SHA256_RE,
     VtError,
     abortErr,
+    certSpecFromVt,
     clampParam,
     dateFromUnix,
     datetimeFromUnix,
@@ -656,7 +657,7 @@ export const vtRelationships = definePlugin({
         name: 'VT Historical Certificates',
         version: '0.2.0',
         description:
-            "Walks VirusTotal's historical SSL/TLS certificates for each selected IP Address or Domain (Premium relationship) and adds each certificate it presented over time as a TLS Certificate linked 'presented certificate', with its SHA-256 thumbprint. This recovers rotated or expired certificates that a current-cert pivot misses. Needs a VirusTotal Premium key. Desktop only.",
+            "Walks VirusTotal's historical SSL/TLS certificates for each selected IP Address or Domain (Premium relationship) and adds each certificate it presented over time as a TLS Certificate linked 'presented certificate' — SHA-256 thumbprint, subject CN, issuer, serial, validity (ISO-8601) and SAN count, the same fields the VirusTotal Community pack writes. This recovers rotated or expired certificates that a current-cert pivot misses. Needs a VirusTotal Premium key. Desktop only.",
         icon: 'file-clock',
         platforms: PLATFORMS,
         params: { type: 'object', properties: { limit: { type: 'number', title: 'Max certificates per node', minimum: 1, maximum: 100, default: 40 } } },
@@ -684,14 +685,8 @@ export const vtRelationships = definePlugin({
                     const body = (await vtGet(ctx, q)) as { data?: any[]; meta?: { cursor?: string } };
                     const batch = Array.isArray(body?.data) ? body.data : [];
                     for (const cert of batch) {
-                        const a = cert?.attributes ?? {};
-                        const thumb = a?.thumbprint_sha256 ?? cert?.id;
-                        if (!thumb) continue;
-                        const data: Record<string, unknown> = { fingerprint_sha256: String(thumb) };
-                        const cn = a?.subject?.CN;
-                        if (typeof cn === 'string' && cn) data.subject_common_name = cn;
-                        const nb = a?.validity?.not_before;
-                        if (typeof nb === 'string' && nb) data.not_before = nb;
+                        const data = certSpecFromVt(cert?.attributes, cert?.id); // same fields as the Community pack
+                        if (!data) continue;
                         const certNode = await ensureNode(ctx, 'infrastructure.certificate', data);
                         await ensureEdge(ctx, node.id, certNode.id, 'presented certificate');
                         counts.certs++;
