@@ -14,20 +14,20 @@ execFileSync('npx', ['esbuild', join(root, 'src', 'vt-core.ts'), '--bundle', '--
 const core = await import(pathToFileURL(out).href);
 const t = suite('vt-core converters');
 
-// ---- ASN: ip_address.asn / netblock.asn are 'AS<n>' strings; autonomous_system_number an integer
+// ---- ASN: a bare integer in every field (infrastructure 3.0); any spelling in, the number out
 for (const v of [14956, '14956', 'AS14956', 'as14956', ' AS 14956 ']) {
-    t.check(`asnLabel(${JSON.stringify(v)}) → 'AS14956'`, core.asnLabel(v) === 'AS14956');
     t.check(`asnNumber(${JSON.stringify(v)}) → 14956`, core.asnNumber(v) === 14956);
 }
 for (const v of [0, 'AS0', -1, 1.5, 4294967296, 'ASX', '', null, undefined, 'AS14956 extra', {}]) {
-    t.check(`asnLabel(${JSON.stringify(v)}) → null`, core.asnLabel(v) === null);
+    t.check(`asnNumber(${JSON.stringify(v)}) → null`, core.asnNumber(v) === null);
 }
 t.check('asnNumber: the 32-bit maximum is kept', core.asnNumber('AS4294967295') === 4294967295);
 
-// nodeSpecFromVt writes the string form for an IP (a number is refused by the host)
+// nodeSpecFromVt writes the integer for an IP (a string is refused by the host)
 {
     const spec = core.nodeSpecFromVt({ type: 'ip_address', id: '144.172.118.4', attributes: { asn: 14956, country: 'US', as_owner: 'RouterHosting LLC' } });
-    t.check('ip node: asn written as the declared string', spec.data.asn === 'AS14956' && typeof spec.data.asn === 'string');
+    t.check('ip node: asn written as the declared integer', spec.data.asn === 14956 && typeof spec.data.asn === 'number');
+    t.check('core: no string-ASN helper left', !('asnLabel' in core));
     const zero = core.nodeSpecFromVt({ type: 'ip_address', id: '10.0.0.1', attributes: { asn: 0 } });
     t.check('ip node: AS0 (not routed) is not written', !('asn' in zero.data));
 }

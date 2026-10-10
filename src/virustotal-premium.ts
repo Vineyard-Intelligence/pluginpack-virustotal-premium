@@ -230,7 +230,7 @@ export const vtSearch = definePlugin({
         identifier: 'run.vineyard.plugins.vt_search',
         content_type: 'vineyard:plugin',
         name: 'VT Search',
-        version: '0.1.0',
+        version: '0.2.0',
         description:
             "Runs a VirusTotal Intelligence search query (as typed, like a Censys/Shodan search) and adds what it matches: hosts as IP Addresses, domains as Domains, URLs as URLs, files as File Hashes. The query decides the entity and the pivot — e.g. 'entity:ip fingerprint:\"<ssh host key or JARM>\"', 'entity:ip port_service_product[443]:nginx open_port:22', 'entity:ip ssl_subject:example.com'. Needs a VirusTotal Premium key; each search costs intelligence quota. Desktop only.",
         icon: 'search',
@@ -464,7 +464,7 @@ export const vtSearchFromNode = definePlugin({
                     enum: PIVOT_MODES,
                     default: 'auto',
                     description:
-                        "auto: the natural pivot per node type — SSH host key / JARM → fingerprint, certificate → subject or thumbprint, domain → ssl_subject, email / organization → whois, file → vhash (else imphash, else main icon), URL → content. content: files containing the Domain, IP or URL string. whois: domains whose WHOIS names the Domain, Email or Organization. imphash / vhash / icon: files sharing the File Hash's import hash, VirusTotal structural hash or main icon. A node the chosen pivot does not apply to is skipped.",
+                        "auto: the natural pivot per node type (SSH key/JARM → fingerprint, cert → subject/thumbprint, domain → ssl_subject, email/org → whois, file → vhash, URL → content). content: files containing the value. whois: domains whose WHOIS names it. imphash/vhash/icon: similar files; others are skipped.",
                 },
                 limit: PARAM_LIMIT,
             },

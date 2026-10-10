@@ -11,7 +11,7 @@
 //   - behaviour_mitre_trees already uses ATT&CK's newer tactic names (TA0005 is "Stealth", and a
 //     TA0112 "Defense Impairment" appears), which the type pack's tactic enum predates.
 //   - an empty relationship is 200 with `data: []` (embedded_ips, bundled_files), not an error.
-//   - every ip_address object carries `asn` as a number; the type pack declares asn a string.
+//   - every ip_address object carries `asn` as a number — the type pack's form (infrastructure 3.0).
 // A 404 on a file's FIRST answered read means VirusTotal has no such file, so it ends that file
 // instead of spending a request per remaining relationship. Any other refusal — a 403, a 400, a 404
 // after an earlier read proved the file exists — skips only the one read it answered.
