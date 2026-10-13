@@ -15,7 +15,7 @@ export const API_KEY_LABEL = 'VirusTotal Premium API Key';
 export const PLATFORMS: PluginManifest['platforms'] = {
     primary: 'desktop',
     web: { runtime: 'sandbox-js', entry: 'dist/pack.mjs' },
-    desktop: { runtime: 'sandbox-js', entry: 'dist/pack.mjs', min_app_version: '0.1.0' },
+    desktop: { runtime: 'sandbox-js', entry: 'dist/pack.mjs' },
 };
 export const netScope = (purpose: string): NetworkScope[] => [{ endpoint: VT_BASE, methods: ['GET'], purpose }];
 export const API_KEY_CONFIG: ConfigValue = { key: 'api_key', label: API_KEY_LABEL, type: 'string', secret: true, optional: false };
