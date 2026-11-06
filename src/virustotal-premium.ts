@@ -721,7 +721,7 @@ const pack: VineyardPluginPack & {
     identifier: 'run.vineyard.pluginpacks.virustotal_premium',
     content_type: 'vineyard:pluginpack',
     name: 'VirusTotal Premium',
-    version: '0.2.0',
+    version: '0.2.1',
     description:
         "VirusTotal Premium-API pivots. Infrastructure: internet-scanning port data and per-port history (vt_port_info, vt_port_history), historical certificates (vt_relationships), WHOIS history with registrant and name-server pivots (vt_whois_history), and the files and URLs tied to a host (vt_host_files, vt_host_urls). Intelligence search, typed or built from a node — shared SSH host key, certificate, JARM, WHOIS registrant, a string inside files, or file similarity (vt_search, vt_search_from_node). Files: the IPs/domains/URLs a sample contacts, embeds or was distributed from (vt_file_network), its related samples (vt_file_relatives), and its sandbox MITRE techniques, YARA/Sigma/IDS matches and family (vt_file_behaviour). Needs the analyst's own VirusTotal Premium API key (VirusTotal Enterprise / Google Threat Intelligence); a community key cannot read these. Desktop only.",
     author: { name: 'VINEYARD', url: 'https://vineyard.run' },
