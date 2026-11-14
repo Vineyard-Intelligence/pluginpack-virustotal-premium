@@ -173,7 +173,9 @@ export function asnNumber(v: unknown): number | null {
 // pack's vtCert mapping. Both packs fill the same certificate node (its identity is the SHA-256
 // thumbprint) and mergeNodeData overwrites with any non-blank value, so two spellings of one field
 // would flip on every run. Community: issuer 'O — CN', serial as VT gives it (a hex string),
-// validity as ISO-8601 UTC (VT sends 'YYYY-MM-DD HH:MM:SS'), san_count over the public names.
+// validity as ISO-8601 UTC (VT sends 'YYYY-MM-DD HH:MM:SS'), san_count over the public names, and
+// VT's SHA-1 `thumbprint` as fingerprint_sha1 — the abuse.ch SSLBL blacklist names certificates by
+// SHA-1 alone, and a SHA-256 cannot be turned into one.
 const INTERNAL_SUFFIX = /\.(local|localdomain|localhost|internal|lan|home\.arpa)$/;
 export function certTime(v: unknown): string | undefined {
     return typeof v === 'string' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(v) ? `${v.replace(' ', 'T')}Z` : undefined;
@@ -192,6 +194,9 @@ export function certSpecFromVt(cert: any, fallbackThumb?: unknown): Record<strin
     const thumb = typeof cert?.thumbprint_sha256 === 'string' ? cert.thumbprint_sha256 : fallbackThumb;
     if (typeof thumb !== 'string' || !SHA256_RE.test(thumb)) return null;
     const data: Record<string, unknown> = { fingerprint_sha256: thumb };
+    if (typeof cert?.thumbprint === 'string' && /^[a-f0-9]{40}$/i.test(cert.thumbprint)) {
+        data.fingerprint_sha1 = cert.thumbprint.toLowerCase();
+    }
     if (typeof cert?.subject?.CN === 'string') data.subject_common_name = cert.subject.CN;
     const issuer = [cert?.issuer?.O, cert?.issuer?.CN].filter((x: unknown) => typeof x === 'string' && x);
     if (issuer.length) data.issuer = issuer.join(' — ');

@@ -655,9 +655,9 @@ export const vtRelationships = definePlugin({
         identifier: 'run.vineyard.plugins.vt_relationships',
         content_type: 'vineyard:plugin',
         name: 'VT Historical Certificates',
-        version: '0.2.0',
+        version: '0.3.0',
         description:
-            "Walks VirusTotal's historical SSL/TLS certificates for each selected IP Address or Domain (Premium relationship) and adds each certificate it presented over time as a TLS Certificate linked 'presented certificate' — SHA-256 thumbprint, subject CN, issuer, serial, validity (ISO-8601) and SAN count, the same fields the VirusTotal Community pack writes. This recovers rotated or expired certificates that a current-cert pivot misses. Needs a VirusTotal Premium key. Desktop only.",
+            "Walks VirusTotal's historical SSL/TLS certificates for each selected IP Address or Domain (Premium relationship) and adds each certificate it presented over time as a TLS Certificate linked 'presented certificate' — SHA-256 and SHA-1 thumbprints, subject CN, issuer, serial, validity (ISO-8601) and SAN count, the same fields the VirusTotal Community pack writes. This recovers rotated or expired certificates that a current-cert pivot misses. Needs a VirusTotal Premium key. Desktop only.",
         icon: 'file-clock',
         platforms: PLATFORMS,
         params: { type: 'object', properties: { limit: { type: 'number', title: 'Max certificates per node', minimum: 1, maximum: 100, default: 40 } } },
@@ -743,7 +743,7 @@ const pack: VineyardPluginPack & {
     identifier: 'run.vineyard.pluginpacks.virustotal_premium',
     content_type: 'vineyard:pluginpack',
     name: 'VirusTotal Premium',
-    version: '0.3.1',
+    version: '0.4.0',
     summary:
         'VirusTotal Premium pivots: port data/history, historical certs, WHOIS history, host files/URLs, file IOCs, relatives and sandbox behaviour, and Intelligence search from keys, certs, WHOIS, strings or similar files. Needs a Premium key. Desktop only.',
     description: PAGE,

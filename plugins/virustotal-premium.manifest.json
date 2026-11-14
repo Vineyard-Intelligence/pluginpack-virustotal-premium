@@ -2,7 +2,7 @@
   "identifier": "run.vineyard.pluginpacks.virustotal_premium",
   "content_type": "vineyard:pluginpack",
   "name": "VirusTotal Premium",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "summary": "VirusTotal Premium pivots: port data/history, historical certs, WHOIS history, host files/URLs, file IOCs, relatives and sandbox behaviour, and Intelligence search from keys, certs, WHOIS, strings or similar files. Needs a Premium key. Desktop only.",
   "description": "For when the current picture is not enough: a port that has since closed, a rotated certificate, an earlier registrant, what a sample did in a sandbox, or the other hosts and samples sharing a key, certificate or registrant. Premium is VirusTotal's paid API tier, sold as VirusTotal Enterprise / Google Threat Intelligence; the free-tier reports are in the separate VirusTotal Community pack.\n\n**Needs:** a Premium key; a community key will not do. Measured on 2026-10-10, Intelligence search, port data and the historical relationships answer 403 on a community key.\n\n**Cost:** besides the Intelligence quota each search spends, a File Hash pivot first reads the file's report, one more request. Lists are read 40 entries per request, so a limit of 100 costs three requests per relationship per node; VT Port History makes one request per port.\n\n**Who sees it:** VirusTotal sees every value looked up or searched, under the analyst's key. Nothing is submitted, and the hosts and files under investigation are never contacted; port data, certificates, WHOIS and sandbox results are what VirusTotal already holds.\n\n**Read results with care:**\n\n- The `vt_` properties record VirusTotal's view at the time of the run.\n- IDS alerts are noisy (ICMP, Tor exit lists), which is why VT File Behaviour leaves them off by default.\n- A popular sample can have hundreds of compressed parents, which is why VT File Relatives leaves `contains` off by default.\n\n**Data and licences:** everything the pack adds is VirusTotal's data, read with the analyst's own key. The pack bundles no data of its own.\n\n**Source:** https://github.com/Vineyard-Intelligence/pluginpack-virustotal-premium (Apache-2.0).",
   "author": {
@@ -409,8 +409,8 @@
       "identifier": "run.vineyard.plugins.vt_relationships",
       "content_type": "vineyard:plugin",
       "name": "VT Historical Certificates",
-      "version": "0.2.0",
-      "description": "Walks VirusTotal's historical SSL/TLS certificates for each selected IP Address or Domain (Premium relationship) and adds each certificate it presented over time as a TLS Certificate linked 'presented certificate' — SHA-256 thumbprint, subject CN, issuer, serial, validity (ISO-8601) and SAN count, the same fields the VirusTotal Community pack writes. This recovers rotated or expired certificates that a current-cert pivot misses. Needs a VirusTotal Premium key. Desktop only.",
+      "version": "0.3.0",
+      "description": "Walks VirusTotal's historical SSL/TLS certificates for each selected IP Address or Domain (Premium relationship) and adds each certificate it presented over time as a TLS Certificate linked 'presented certificate' — SHA-256 and SHA-1 thumbprints, subject CN, issuer, serial, validity (ISO-8601) and SAN count, the same fields the VirusTotal Community pack writes. This recovers rotated or expired certificates that a current-cert pivot misses. Needs a VirusTotal Premium key. Desktop only.",
       "icon": "file-clock",
       "platforms": {
         "primary": "desktop",

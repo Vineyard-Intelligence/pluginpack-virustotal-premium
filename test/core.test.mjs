@@ -36,6 +36,7 @@ t.check('asnNumber: the 32-bit maximum is kept', core.asnNumber('AS4294967295') 
 {
     const attrs = {
         thumbprint_sha256: '611595f46ea098519e971340ad6652f46c5e08c38e4d4fc69a28a092b15e3cfa',
+        thumbprint: '2D3B1C8E5F0A4B6C7D8E9F001122334455667788',
         serial_number: 'bacaab0aa85cf5a0368f8d901a6c5ebd1e41a43',
         subject: { O: 'GoldTrade FX', CN: 'vpn-gw.internal.goldtrade-fx.com' },
         issuer: { O: 'GoldTrade FX', CN: 'vpn-gw.internal.goldtrade-fx.com' },
@@ -44,6 +45,9 @@ t.check('asnNumber: the 32-bit maximum is kept', core.asnNumber('AS4294967295') 
     };
     const d = core.certSpecFromVt(attrs);
     t.check('cert: thumbprint is the identity', d.fingerprint_sha256 === attrs.thumbprint_sha256);
+    // SSLBL lists certificates by SHA-1 only, and a SHA-256 cannot be turned into one.
+    t.check('cert: the SHA-1 thumbprint is kept, lowercased, as fingerprint_sha1', d.fingerprint_sha1 === attrs.thumbprint.toLowerCase());
+    t.check('cert: no fingerprint_sha1 key without a 40-hex thumbprint', !('fingerprint_sha1' in core.certSpecFromVt({ thumbprint_sha256: attrs.thumbprint_sha256, thumbprint: 'abc' })));
     t.check('cert: subject_common_name (the type pack property, not subject_cn)', d.subject_common_name === 'vpn-gw.internal.goldtrade-fx.com' && !('subject_cn' in d));
     t.check("cert: issuer 'O — CN' like the Community pack", d.issuer === 'GoldTrade FX — vpn-gw.internal.goldtrade-fx.com');
     t.check('cert: serial kept as the hex string VT gives', d.serial_number === 'bacaab0aa85cf5a0368f8d901a6c5ebd1e41a43');

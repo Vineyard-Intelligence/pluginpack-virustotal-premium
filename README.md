@@ -24,7 +24,7 @@ Desktop-only (VirusTotal sends no CORS headers).
 |---|---|---|
 | **VT Port Info** (`vt_port_info`) | IP | Open ports + service per port, JARM, scan freshness; closed/recently-closed ports (VT keeps them); mints each **SSH host key** as a node (SHA-256 hex, VT's OpenSSH spelling kept as `vt_fingerprint`). |
 | **VT Port History** (`vt_port_history`) | IP | Per-port `first_seen` / `open_since` / `last_seen_open` / status → a forensic timeline that survives a port going down. |
-| **VT Historical Certificates** (`vt_relationships`) | IP / domain | Walks `historical_ssl_certificates` → every cert presented over time, so a rotated/expired cert is still recoverable. |
+| **VT Historical Certificates** (`vt_relationships`) | IP / domain | Walks `historical_ssl_certificates` → every cert presented over time, so a rotated/expired cert is still recoverable. Each keeps its SHA-1 thumbprint as `fingerprint_sha1`, which the abuse.ch pack's SSLBL Certificate Check matches on. |
 | **VT WHOIS History** (`vt_whois_history`) | domain / IP | `historical_whois` → a change timeline on the node (`vt_whois_history`), registrant **email** and **organization** nodes, and every **name server** ever used. Privacy-service placeholders are kept out; VT's pseudonymised emails become nodes because VT search still matches them. |
 | **VT Host Files** (`vt_host_files`) | IP / domain / URL | Files that **contact** the host (its malware), files it **served**, and (opt-in) files that **name** it. |
 | **VT Host URLs** (`vt_host_urls`) | IP / domain | The URLs VT has seen on the host, with title, status and verdicts. |
