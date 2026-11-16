@@ -4,6 +4,7 @@
 // plugin reads. The net is mocked; a `respond(url)` returns { status, body }.
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
 // Optional argv[2]: a bundle to test instead of dist/pack.mjs (e.g. one built to a scratch path).
 const pack = (await import(process.argv[2] ? pathToFileURL(resolve(process.argv[2])).href : './dist/pack.mjs')).default;
 
@@ -167,6 +168,25 @@ for (const p of pack.plugins) {
     check('relationships: a cert without a 64-hex thumbprint is skipped', graph.createdNodes.filter((n) => n.type === 'infrastructure.certificate').length === 1);
     check('relationships: linked "presented certificate"', graph.createdEdges.some((e) => e.label === 'presented certificate'));
     check('relationships: counts', r.counts.certs === 1);
+}
+
+// ---- registry schema ------------------------------------------------------------------------
+// The registry validates the pack document against its pluginpack schema, whose member entries
+// allow only these keys and cap a description at 1,024 characters. 0.4.0 shipped VT Search from
+// Node with a 1,364-character description, so its pinned document failed that check.
+{
+    const MEMBER_KEYS = ['content_type', 'description', 'icon', 'identifier', 'io', 'license', 'lifecycle', 'name', 'params', 'platforms', 'scopes', 'version'];
+    const doc = JSON.parse(readFileSync(new URL('./plugins/virustotal-premium.manifest.json', import.meta.url), 'utf8'));
+    for (const m of doc.plugins) {
+        check(`schema: ${m.name} carries only member keys`, Object.keys(m).every((k) => MEMBER_KEYS.includes(k)));
+        check(`schema: ${m.name} description is at most 1,024 characters`, typeof m.description === 'string' && m.description.length <= 1024);
+        check(`schema: ${m.name} name is at most 128 characters`, m.name.length <= 128);
+    }
+    check('schema: summary is at most 250 characters', doc.summary.length <= 250);
+    // Shortening the description must not drop a link name: the analyst reads them to know what a pivot drew.
+    const pivotLabels = ['shares SSH host key (VT)', 'shares JARM (VT)', 'shares certificate subject (VT)', 'shares certificate thumbprint (VT)', 'certificate names this domain (VT)', 'WHOIS names this email (VT)', 'WHOIS names this organization (VT)', 'WHOIS mentions this domain (VT)', 'shares vhash (VT)', 'shares imphash (VT)', 'shares main icon (VT)', 'contains this string (VT content search)'];
+    const sfn = P['run.vineyard.plugins.vt_search_from_node'].manifest.description;
+    check('schema: VT Search from Node quotes every link it draws', pivotLabels.every((l) => sfn.includes(`'${l}'`)));
 }
 
 // ---- report --------------------------------------------------------------------------------

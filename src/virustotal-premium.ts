@@ -452,7 +452,7 @@ export const vtSearchFromNode = definePlugin({
         name: 'VT Search from Node',
         version: '0.2.0',
         description:
-            "Pivots from each selected node by building a VirusTotal Intelligence query from it and adding what matches, the matches of the pivot's target linked back to the source. Pivot 'auto' picks the natural query per type: an SSH Host Key or an IP Address's JARM on fingerprint: (hosts linked 'shares SSH host key (VT)' / 'shares JARM (VT)'), a TLS Certificate on its subject or thumbprint ('shares certificate subject (VT)' / 'shares certificate thumbprint (VT)'), a Domain on ssl_subject: ('certificate names this domain (VT)'), an Email Address or Organization on whois: (domains linked 'WHOIS names this email (VT)' / 'WHOIS names this organization (VT)'), a File Hash on its vhash, else imphash, else main icon (files linked 'shares vhash (VT)' / 'shares imphash (VT)' / 'shares main icon (VT)'), a URL on content: (files linked 'contains this string (VT content search)'). Pivot 'content' finds the files containing a Domain, IP Address or URL string ('contains this string (VT content search)'); 'whois' finds the domains whose WHOIS names a Domain ('WHOIS mentions this domain (VT)'), Email Address or Organization; 'imphash', 'vhash' and 'icon' pick that File Hash pivot. VirusTotal's pseudonymised organization names, truncated emails and privacy-proxy placeholders are skipped. Each pivot costs intelligence quota. Needs a VirusTotal Premium key. Desktop only.",
+            "Queries VirusTotal Intelligence from each selected node and links the matches to it. Pivot 'auto' picks by type: SSH Host Key or an IP's JARM by fingerprint ('shares SSH host key (VT)', 'shares JARM (VT)'), TLS Certificate by subject or thumbprint ('shares certificate subject (VT)', 'shares certificate thumbprint (VT)'), Domain by ssl_subject ('certificate names this domain (VT)'), Email Address or Organization by WHOIS ('WHOIS names this email (VT)', 'WHOIS names this organization (VT)'), File Hash by vhash, else imphash, else main icon ('shares vhash (VT)', 'shares imphash (VT)', 'shares main icon (VT)'), URL by content ('contains this string (VT content search)'). Others force one query: 'content' (files containing a Domain, IP or URL), 'whois' (domains whose WHOIS names it; 'WHOIS mentions this domain (VT)' for a Domain), 'imphash', 'vhash', 'icon'. Pseudonymised names, truncated emails and privacy proxies are skipped. Each pivot costs Intelligence quota. Needs a VirusTotal Premium key. Desktop only.",
         icon: 'git-fork',
         platforms: PLATFORMS,
         params: {
@@ -743,7 +743,7 @@ const pack: VineyardPluginPack & {
     identifier: 'run.vineyard.pluginpacks.virustotal_premium',
     content_type: 'vineyard:pluginpack',
     name: 'VirusTotal Premium',
-    version: '0.4.0',
+    version: '0.4.1',
     summary:
         'VirusTotal Premium pivots: port data/history, historical certs, WHOIS history, host files/URLs, file IOCs, relatives and sandbox behaviour, and Intelligence search from keys, certs, WHOIS, strings or similar files. Needs a Premium key. Desktop only.',
     description: PAGE,
